@@ -1,0 +1,21 @@
+[package]
+name = "tauri-kit-sidecar"
+version = "0.1.0"
+description = "Run a bundled helper process for a desktop app: no console window, no orphans, and a readiness wait that notices a crash."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+keywords = ["tauri", "sidecar", "process", "job-object", "desktop"]
+categories = ["os"]
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
