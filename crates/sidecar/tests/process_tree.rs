@@ -167,3 +167,18 @@ fn output_is_written_to_files() {
     assert!(read(&stdout).contains("hello"));
     assert!(read(&stderr).contains("oops"));
 }
+
+#[test]
+fn a_sidecar_started_from_a_thread_outlives_that_thread() {
+    // Apps start helpers from worker threads. Tying the helper's life to the spawning thread
+    // (Linux PR_SET_PDEATHSIG does exactly that) would kill it as soon as the thread returns.
+    let mut sidecar =
+        std::thread::spawn(|| Sidecar::spawn(long_running(), Output::Discard).unwrap())
+            .join()
+            .unwrap();
+    sleep(Duration::from_millis(500));
+    assert!(
+        sidecar.is_running(),
+        "the sidecar died with the thread that started it"
+    );
+}

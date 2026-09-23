@@ -299,16 +299,10 @@ mod tree {
     pub struct Tree;
 
     pub fn prepare(cmd: &mut Command) {
+        // No PR_SET_PDEATHSIG on Linux: it fires when the *thread* that spawned the child exits,
+        // not the process, so a sidecar started from a worker thread would be killed the moment
+        // that thread finished.
         cmd.process_group(0);
-        #[cfg(target_os = "linux")]
-        // SAFETY: prctl is async-signal-safe and touches only the calling (child) process.
-        unsafe {
-            cmd.pre_exec(|| {
-                // If the app dies without cleaning up, the kernel stops the sidecar.
-                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
-                Ok(())
-            });
-        }
     }
 
     pub fn adopt(_child: &Child) -> io::Result<Tree> {
