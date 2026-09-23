@@ -182,3 +182,45 @@ fn a_sidecar_started_from_a_thread_outlives_that_thread() {
         "the sidecar died with the thread that started it"
     );
 }
+
+#[test]
+fn the_exit_status_is_kept_when_it_is_read_early() {
+    // Reading whether the sidecar exited must not use its status up: stopping it afterwards
+    // still reports how it exited.
+    let mut sidecar = Sidecar::spawn(shell("exit 3"), Output::Discard).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let early = loop {
+        if let Some(status) = sidecar.try_status().unwrap() {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "the sidecar did not exit");
+        sleep(Duration::from_millis(20));
+    };
+    assert_eq!(early.code(), Some(3));
+    assert_eq!(
+        sidecar.try_status().unwrap().and_then(|s| s.code()),
+        Some(3)
+    );
+    assert!(!sidecar.is_running());
+    assert_eq!(sidecar.shutdown(Duration::ZERO).unwrap().code(), Some(3));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn an_exited_sidecar_keeps_its_pid_until_it_is_stopped() {
+    // Its process-group id is how the tree is stopped; if the pid were freed as soon as the exit
+    // was noticed, the system could give it to an unrelated process before the group is killed.
+    let mut sidecar = Sidecar::spawn(shell("exit 0"), Output::Discard).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while sidecar.try_status().unwrap().is_none() {
+        assert!(Instant::now() < deadline, "the sidecar did not exit");
+        sleep(Duration::from_millis(20));
+    }
+    let stat = std::fs::read_to_string(format!("/proc/{}/stat", sidecar.id()))
+        .expect("the pid was released as soon as the exit was noticed");
+    let state = stat.rsplit(") ").next().unwrap().chars().next().unwrap();
+    assert_eq!(
+        state, 'Z',
+        "expected the exited sidecar to be held unreaped"
+    );
+}

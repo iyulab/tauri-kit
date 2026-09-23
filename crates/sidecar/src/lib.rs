@@ -140,12 +140,12 @@ impl Sidecar {
 
     /// The exit status, if the sidecar has exited. Does not wait.
     pub fn try_status(&mut self) -> io::Result<Option<ExitStatus>> {
-        self.child.try_wait()
+        tree::exit_status(&mut self.child)
     }
 
     /// Whether the sidecar is still running.
     pub fn is_running(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(None))
+        matches!(tree::exit_status(&mut self.child), Ok(None))
     }
 
     /// Calls `probe` every `interval` until it returns true, the sidecar exits, or `deadline`
@@ -159,7 +159,7 @@ impl Sidecar {
     ) -> io::Result<Readiness> {
         let until = Instant::now() + deadline;
         loop {
-            if let Some(status) = self.child.try_wait()? {
+            if let Some(status) = tree::exit_status(&mut self.child)? {
                 return Ok(Readiness::Exited(status));
             }
             if probe() {
@@ -183,7 +183,7 @@ impl Sidecar {
         tree::request_stop(&self.child);
         let until = Instant::now() + grace;
         while Instant::now() < until {
-            if self.child.try_wait()?.is_some() {
+            if tree::exit_status(&mut self.child)?.is_some() {
                 break;
             }
             thread::sleep(Duration::from_millis(20));
@@ -221,7 +221,7 @@ fn drain(stream: impl Read + Send + 'static, path: PathBuf) {
 mod tree {
     use std::io;
     use std::os::windows::io::AsRawHandle;
-    use std::process::{Child, Command};
+    use std::process::{Child, Command, ExitStatus};
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
@@ -271,6 +271,11 @@ mod tree {
     /// Windows has no signal to ask a process to exit; the app asks through its own channel.
     pub fn request_stop(_child: &Child) {}
 
+    /// The child's handle stays open until it is waited on, so its id cannot be reused meanwhile.
+    pub fn exit_status(child: &mut Child) -> io::Result<Option<ExitStatus>> {
+        child.try_wait()
+    }
+
     impl Tree {
         pub fn kill(&self, _child: &mut Child) -> io::Result<()> {
             // SAFETY: the job handle is valid for the lifetime of `self`.
@@ -292,8 +297,8 @@ mod tree {
 #[cfg(unix)]
 mod tree {
     use std::io;
-    use std::os::unix::process::CommandExt;
-    use std::process::{Child, Command};
+    use std::os::unix::process::{CommandExt, ExitStatusExt};
+    use std::process::{Child, Command, ExitStatus};
 
     /// The sidecar leads its own process group, so the group id is its pid.
     pub struct Tree;
@@ -307,6 +312,45 @@ mod tree {
 
     pub fn adopt(_child: &Child) -> io::Result<Tree> {
         Ok(Tree)
+    }
+
+    /// Whether the sidecar has exited, without reaping it.
+    ///
+    /// Reaping frees its pid — and with it the process-group id the tree is stopped through — for
+    /// the system to hand to an unrelated process. Left unreaped, the id stays reserved until
+    /// `Child::wait` after the group has been killed.
+    pub fn exit_status(child: &mut Child) -> io::Result<Option<ExitStatus>> {
+        // SAFETY: an all-zero siginfo_t is valid; waitid only writes into it.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        // SAFETY: waiting on our own child, without consuming its exit (WNOWAIT).
+        let rc = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                child.id() as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        if rc != 0 {
+            let err = io::Error::last_os_error();
+            // Already reaped by `Child` itself: it kept the status.
+            if err.raw_os_error() == Some(libc::ECHILD) {
+                return child.try_wait();
+            }
+            return Err(err);
+        }
+        // SAFETY: filled in by a successful waitid for a child that changed state.
+        let (pid, status) = unsafe { (info.si_pid(), info.si_status()) };
+        if pid == 0 {
+            return Ok(None); // still running (WNOHANG)
+        }
+        // Re-encode as the wait status ExitStatus is built from.
+        let raw = match info.si_code {
+            libc::CLD_EXITED => (status & 0xff) << 8,
+            libc::CLD_DUMPED => status | 0x80,
+            _ => status,
+        };
+        Ok(Some(ExitStatus::from_raw(raw)))
     }
 
     pub fn request_stop(child: &Child) {
@@ -333,7 +377,7 @@ mod tree {
 #[cfg(not(any(windows, unix)))]
 mod tree {
     use std::io;
-    use std::process::{Child, Command};
+    use std::process::{Child, Command, ExitStatus};
 
     pub struct Tree;
 
@@ -344,6 +388,10 @@ mod tree {
     }
 
     pub fn request_stop(_child: &Child) {}
+
+    pub fn exit_status(child: &mut Child) -> io::Result<Option<ExitStatus>> {
+        child.try_wait()
+    }
 
     impl Tree {
         pub fn kill(&self, child: &mut Child) -> io::Result<()> {

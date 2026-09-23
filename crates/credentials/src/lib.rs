@@ -34,7 +34,7 @@
 //! store of its own with [`keyring_core::set_default_store`] — including the in-memory
 //! `keyring_core::mock` store, which is how tests run without touching the real one.
 
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 pub use keyring_core::Error;
 
@@ -134,15 +134,23 @@ impl Credentials {
 }
 
 /// Installs the platform's store as the default once, unless the app already installed one.
+///
+/// Only success is remembered. A store that is not reachable yet (a Linux session bus still starting)
+/// is tried again on the next call, and its own error is what the caller sees.
 fn ensure_store() -> Result<()> {
-    static INSTALLED: OnceLock<std::result::Result<(), String>> = OnceLock::new();
-    let outcome = INSTALLED.get_or_init(|| {
-        if keyring_core::get_default_store().is_some() {
-            return Ok(());
+    static INSTALLED: OnceLock<()> = OnceLock::new();
+    static INSTALLING: Mutex<()> = Mutex::new(());
+    if INSTALLED.get().is_some() {
+        return Ok(());
+    }
+    let _one_at_a_time = INSTALLING.lock().unwrap_or_else(|e| e.into_inner());
+    if INSTALLED.get().is_none() {
+        if keyring_core::get_default_store().is_none() {
+            install_platform_store()?;
         }
-        install_platform_store().map_err(|e| e.to_string())
-    });
-    outcome.clone().map_err(|_| Error::NoDefaultStore)
+        let _ = INSTALLED.set(());
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]

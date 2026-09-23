@@ -25,6 +25,7 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
+use std::time::Duration;
 
 /// Prefix of every temporary file this crate creates. [`sweep_staging`] removes only files that
 /// carry it, so a staging directory can be shared with other tools without losing their files.
@@ -57,10 +58,12 @@ pub fn write_atomic_staged(path: &Path, content: &[u8], staging: &Path) -> io::R
 /// Removes temporary files left in `staging` by writes that never finished (a crash or power loss
 /// between creating the temp file and renaming it). Call it once at startup.
 ///
-/// Only files named with [`TEMP_PREFIX`] are removed. A missing directory is not an error. Files
-/// that cannot be removed — for example one still held open by another running instance — are
-/// skipped. Returns how many files were removed.
-pub fn sweep_staging(staging: &Path) -> io::Result<usize> {
+/// Only files named with [`TEMP_PREFIX`] and last modified more than `older_than` ago are removed.
+/// The age is what keeps a sweep away from a write still in progress in another running instance
+/// of the app: on Unix an open file can be deleted, so being held open protects nothing. A write
+/// takes moments; an age of minutes leaves only true leftovers. A missing directory is not an
+/// error; files that cannot be removed are skipped. Returns how many files were removed.
+pub fn sweep_staging(staging: &Path, older_than: Duration) -> io::Result<usize> {
     let entries = match fs::read_dir(staging) {
         Ok(entries) => entries,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(0),
@@ -70,7 +73,13 @@ pub fn sweep_staging(staging: &Path) -> io::Result<usize> {
     for entry in entries.flatten() {
         let ours = entry.file_name().to_string_lossy().starts_with(TEMP_PREFIX);
         let is_file = entry.file_type().map(|t| t.is_file()).unwrap_or(false);
-        if ours && is_file && fs::remove_file(entry.path()).is_ok() {
+        // A modification time in the future (clock changes) reads as zero age: kept.
+        let old = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .map(|t| t.elapsed().unwrap_or(Duration::ZERO) >= older_than)
+            .unwrap_or(false);
+        if ours && is_file && old && fs::remove_file(entry.path()).is_ok() {
             removed += 1;
         }
     }
@@ -171,7 +180,7 @@ mod tests {
         fs::write(staging.path().join("someone-else.tmp"), "keep").unwrap();
         fs::create_dir(staging.path().join(format!("{TEMP_PREFIX}dir"))).unwrap();
 
-        assert_eq!(sweep_staging(staging.path()).unwrap(), 1);
+        assert_eq!(sweep_staging(staging.path(), Duration::ZERO).unwrap(), 1);
         assert_eq!(
             names(staging.path()),
             vec![format!("{TEMP_PREFIX}dir"), "someone-else.tmp".to_string()]
@@ -181,7 +190,29 @@ mod tests {
     #[test]
     fn sweeping_a_missing_directory_is_not_an_error() {
         let root = tempfile::tempdir().unwrap();
-        assert_eq!(sweep_staging(&root.path().join("absent")).unwrap(), 0);
+        assert_eq!(
+            sweep_staging(&root.path().join("absent"), Duration::ZERO).unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn sweep_leaves_a_recent_temp_file_alone() {
+        // It may be another running instance's write in progress.
+        let staging = tempfile::tempdir().unwrap();
+        fs::write(
+            staging.path().join(format!("{TEMP_PREFIX}inflight")),
+            "part",
+        )
+        .unwrap();
+        assert_eq!(
+            sweep_staging(staging.path(), Duration::from_secs(600)).unwrap(),
+            0
+        );
+        assert_eq!(
+            names(staging.path()),
+            vec![format!("{TEMP_PREFIX}inflight")]
+        );
     }
 
     #[test]
