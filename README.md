@@ -7,6 +7,7 @@ apps end up writing for themselves, each in its own small crate so an app takes 
 
 | Crate | What it gives an app |
 |---|---|
+| [`tauri-kit-credentials`](crates/credentials) | **Secrets in the OS credential store** — Windows Credential Manager, macOS Keychain, the Secret Service on Linux. Test runs and debug builds get their own entries, decided at compile time where the app writes `build_kind!()`, so running the test suite or a development build never overwrites or clears the secrets of the installed app. |
 | [`tauri-kit-fs`](crates/fs) | **Crash-safe file writes.** Write, flush to the device, then rename into place, so a crash or power loss leaves the old content or the new — never a truncated file. Optional staging directory for apps whose folders are watched or synced, and a startup sweep that removes only its own leftovers. |
 
 More capabilities will be added as separate crates.
@@ -16,12 +17,20 @@ More capabilities will be added as separate crates.
 ```toml
 [dependencies]
 tauri-kit-fs = { git = "https://github.com/iyulab/tauri-kit", tag = "..." }
+tauri-kit-credentials = { git = "https://github.com/iyulab/tauri-kit", tag = "..." }
 ```
 
 ```rust
 use std::path::Path;
 
 tauri_kit_fs::write_atomic(Path::new("settings.json"), br#"{"theme":"dark"}"#)?;
+```
+
+```rust
+use tauri_kit_credentials::{build_kind, Credentials};
+
+let credentials = Credentials::new("com.example.app", build_kind!());
+credentials.set("api-key", "s3cret")?;
 ```
 
 ## License
