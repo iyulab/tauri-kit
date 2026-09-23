@@ -1,0 +1,13 @@
+[package]
+name = "tauri-kit-fs"
+version = "0.1.0"
+description = "Crash-safe file writes for desktop apps: write, sync, then rename into place."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+keywords = ["tauri", "atomic", "fsync", "file", "desktop"]
+categories = ["filesystem"]
+
+[dependencies]
+tempfile = "3"

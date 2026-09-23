@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/iyulab/tauri-kit"
+rust-version = "1.77"
