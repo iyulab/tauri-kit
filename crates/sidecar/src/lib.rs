@@ -9,7 +9,8 @@
 //!   OS tears down with the app, or in its own process group on Unix, and stops the whole tree.
 //! - **A crash looks like a slow start.** Waiting for a sidecar to become ready by polling it alone
 //!   keeps waiting after it has died. [`Sidecar::wait_ready`] checks the process between probes and
-//!   returns as soon as it exits.
+//!   returns as soon as it exits. A sidecar that announces readiness on stdout — often with the
+//!   port it chose — is waited for with [`Sidecar::wait_line`], under the same rules.
 //! - **Pipes fill up.** A child whose output nobody reads blocks once the pipe buffer is full.
 //!   [`Output::Files`] drains both streams on background threads.
 //!
@@ -40,6 +41,9 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, TcpListener};
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -76,6 +80,21 @@ pub enum Output {
     /// Appended line by line to these files, read on background threads so the child never blocks
     /// on a full pipe. Bytes that are not valid UTF-8 are replaced rather than dropping the line.
     Files { stdout: PathBuf, stderr: PathBuf },
+    /// stdout is read line by line for [`Sidecar::wait_line`], and drained on a background thread
+    /// for as long as the sidecar runs, so the child never blocks on a full pipe. stderr is appended
+    /// to a file, as with [`Output::Files`], or discarded.
+    Lines { stderr: Option<PathBuf> },
+}
+
+/// How waiting for a readiness line ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LineReadiness {
+    /// The first stdout line the caller accepted, without its line ending.
+    Line(String),
+    /// The process exited before printing a line the caller accepted.
+    Exited(ExitStatus),
+    /// Neither happened before the deadline. The process is still running.
+    TimedOut,
 }
 
 /// How waiting for a sidecar to become ready ended.
@@ -96,6 +115,14 @@ pub enum Readiness {
 pub struct Sidecar {
     child: Child,
     tree: tree::Tree,
+    lines: Option<Lines>,
+}
+
+/// stdout lines on their way to [`Sidecar::wait_line`]. Sent only while someone may still wait for
+/// one; afterwards the reader drains without keeping anything.
+struct Lines {
+    receiver: Receiver<String>,
+    listening: Arc<AtomicBool>,
 }
 
 impl Sidecar {
@@ -111,6 +138,14 @@ impl Sidecar {
             Output::Files { .. } => {
                 cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
             }
+            Output::Lines { stderr } => {
+                cmd.stdout(Stdio::piped());
+                cmd.stderr(if stderr.is_some() {
+                    Stdio::piped()
+                } else {
+                    Stdio::null()
+                });
+            }
         }
         tree::prepare(&mut cmd);
         let mut child = cmd.spawn()?;
@@ -122,15 +157,27 @@ impl Sidecar {
                 return Err(e);
             }
         };
-        if let Output::Files { stdout, stderr } = output {
-            if let Some(out) = child.stdout.take() {
-                drain(out, stdout);
+        let mut lines = None;
+        match output {
+            Output::Discard => {}
+            Output::Files { stdout, stderr } => {
+                if let Some(out) = child.stdout.take() {
+                    drain(out, stdout);
+                }
+                if let Some(err) = child.stderr.take() {
+                    drain(err, stderr);
+                }
             }
-            if let Some(err) = child.stderr.take() {
-                drain(err, stderr);
+            Output::Lines { stderr } => {
+                if let Some(out) = child.stdout.take() {
+                    lines = Some(read_lines(out));
+                }
+                if let (Some(err), Some(path)) = (child.stderr.take(), stderr) {
+                    drain(err, path);
+                }
             }
         }
-        Ok(Self { child, tree })
+        Ok(Self { child, tree, lines })
     }
 
     /// The operating system's id for the sidecar process.
@@ -170,6 +217,61 @@ impl Sidecar {
                 return Ok(Readiness::TimedOut);
             }
             thread::sleep(interval.min(until - now));
+        }
+    }
+
+    /// Waits for the first stdout line `accept` returns true for, the sidecar exiting, or `deadline`
+    /// passing — whichever comes first. The line is returned the moment it is printed; a sidecar
+    /// that exits during startup is reported at once, as with [`Sidecar::wait_ready`].
+    ///
+    /// Lines `accept` turns down are dropped. Once a line is accepted, the rest of stdout is still
+    /// drained but no longer kept. Requires [`Output::Lines`]; otherwise fails with
+    /// [`io::ErrorKind::InvalidInput`].
+    pub fn wait_line(
+        &mut self,
+        deadline: Duration,
+        mut accept: impl FnMut(&str) -> bool,
+    ) -> io::Result<LineReadiness> {
+        let Some(lines) = &self.lines else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "wait_line needs Output::Lines",
+            ));
+        };
+        let until = Instant::now() + deadline;
+        loop {
+            let now = Instant::now();
+            if now >= until {
+                return Ok(LineReadiness::TimedOut);
+            }
+            match lines
+                .receiver
+                .recv_timeout((until - now).min(Duration::from_millis(50)))
+            {
+                Ok(line) if accept(&line) => {
+                    lines.listening.store(false, Ordering::Relaxed);
+                    return Ok(LineReadiness::Line(line));
+                }
+                Ok(_) => continue,
+                Err(RecvTimeoutError::Timeout) => {}
+                // stdout closed: no line will come; only the process's end is left to report.
+                Err(RecvTimeoutError::Disconnected) => {
+                    thread::sleep(
+                        Duration::from_millis(20)
+                            .min(until.saturating_duration_since(Instant::now())),
+                    );
+                }
+            }
+            if let Some(status) = tree::exit_status(&mut self.child)? {
+                // Lines printed just before exiting may still be queued.
+                while let Ok(line) = lines.receiver.try_recv() {
+                    if accept(&line) {
+                        lines.listening.store(false, Ordering::Relaxed);
+                        return Ok(LineReadiness::Line(line));
+                    }
+                }
+                return Ok(LineReadiness::Exited(status));
+            }
         }
     }
 
@@ -215,6 +317,28 @@ fn drain(stream: impl Read + Send + 'static, path: PathBuf) {
             line.clear();
         }
     });
+}
+
+fn read_lines(stream: impl Read + Send + 'static) -> Lines {
+    let (sender, receiver) = mpsc::channel();
+    let listening = Arc::new(AtomicBool::new(true));
+    let still = Arc::clone(&listening);
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stream);
+        let mut line = Vec::new();
+        while matches!(reader.read_until(b'\n', &mut line), Ok(n) if n > 0) {
+            if still.load(Ordering::Relaxed) {
+                let text = String::from_utf8_lossy(&line);
+                // A dropped receiver only means nobody waits any more; keep draining.
+                let _ = sender.send(text.trim_end_matches(['\r', '\n']).to_owned());
+            }
+            line.clear();
+        }
+    });
+    Lines {
+        receiver,
+        listening,
+    }
 }
 
 #[cfg(windows)]

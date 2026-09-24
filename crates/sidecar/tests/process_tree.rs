@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::Command;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
-use tauri_kit_sidecar::{Output, Readiness, Sidecar};
+use tauri_kit_sidecar::{LineReadiness, Output, Readiness, Sidecar};
 
 /// A shell command line, passed verbatim.
 fn shell(line: &str) -> Command {
@@ -223,4 +223,87 @@ fn an_exited_sidecar_keeps_its_pid_until_it_is_stopped() {
         state, 'Z',
         "expected the exited sidecar to be held unreaped"
     );
+}
+
+#[test]
+fn a_readiness_line_is_returned_as_soon_as_it_is_printed() {
+    let started = Instant::now();
+    let line = if cfg!(windows) {
+        "echo noise& echo {\"port\":51233}& ping -n 30 127.0.0.1 >NUL"
+    } else {
+        "echo noise; echo '{\"port\":51233}'; sleep 30"
+    };
+    let mut sidecar = Sidecar::spawn(shell(line), Output::Lines { stderr: None }).unwrap();
+    let readiness = sidecar
+        .wait_line(Duration::from_secs(20), |l| l.starts_with('{'))
+        .unwrap();
+    assert_eq!(
+        readiness,
+        LineReadiness::Line("{\"port\":51233}".to_owned())
+    );
+    assert!(started.elapsed() < Duration::from_secs(10));
+    assert!(sidecar.is_running());
+}
+
+#[test]
+fn a_crash_before_the_readiness_line_is_reported_at_once() {
+    let started = Instant::now();
+    let mut sidecar = Sidecar::spawn(
+        shell("echo starting& exit 4"),
+        Output::Lines { stderr: None },
+    )
+    .unwrap();
+    let readiness = sidecar
+        .wait_line(Duration::from_secs(30), |l| l.starts_with('{'))
+        .unwrap();
+    assert!(matches!(readiness, LineReadiness::Exited(s) if s.code() == Some(4)));
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "waited out the deadline instead"
+    );
+}
+
+#[test]
+fn waiting_for_a_line_stops_at_the_deadline() {
+    let mut sidecar = Sidecar::spawn(long_running(), Output::Lines { stderr: None }).unwrap();
+    let readiness = sidecar
+        .wait_line(Duration::from_millis(300), |_| true)
+        .unwrap();
+    assert_eq!(readiness, LineReadiness::TimedOut);
+    assert!(sidecar.is_running());
+}
+
+#[test]
+fn output_after_the_readiness_line_keeps_being_drained() {
+    // Far more than a pipe buffer after the line: if nobody read it, the child would block and never exit.
+    let line = if cfg!(windows) {
+        "echo ready& for /L %i in (1,1,20000) do @echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    } else {
+        "echo ready; i=0; while [ $i -lt 20000 ]; do echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; i=$((i+1)); done"
+    };
+    let mut sidecar = Sidecar::spawn(shell(line), Output::Lines { stderr: None }).unwrap();
+    let readiness = sidecar
+        .wait_line(Duration::from_secs(20), |l| l == "ready")
+        .unwrap();
+    assert_eq!(readiness, LineReadiness::Line("ready".to_owned()));
+    let until = Instant::now() + Duration::from_secs(30);
+    while sidecar.is_running() && Instant::now() < until {
+        sleep(Duration::from_millis(50));
+    }
+    assert!(!sidecar.is_running(), "the child blocked on a full pipe");
+    // Closing stdout instead of draining it would unblock the child by failing its writes; on Unix
+    // that kills the shell (SIGPIPE) and shows here. cmd on Windows exits 0 regardless.
+    assert!(
+        sidecar.try_status().unwrap().unwrap().success(),
+        "the child's writes failed"
+    );
+}
+
+#[test]
+fn waiting_for_a_line_needs_lines_output() {
+    let mut sidecar = Sidecar::spawn(long_running(), Output::Discard).unwrap();
+    let error = sidecar
+        .wait_line(Duration::from_millis(10), |_| true)
+        .unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
 }
