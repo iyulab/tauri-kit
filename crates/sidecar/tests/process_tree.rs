@@ -32,16 +32,29 @@ fn long_running() -> Command {
     }
 }
 
-/// Starts a grandchild that writes `marker` after about two seconds, then keeps running itself.
-fn with_grandchild(marker: &Path) -> Command {
-    let marker = marker.display();
+/// Starts a grandchild that writes `started` at once and `marker` about two seconds later, then
+/// keeps running itself.
+fn with_grandchild(started: &Path, marker: &Path) -> Command {
+    let (started, marker) = (started.display(), marker.display());
     if cfg!(windows) {
         shell(&format!(
             // The temp path has no spaces, so it is not quoted: cmd's nested quoting is fragile.
-            "\"start \"\" /B cmd /C \"ping -n 3 127.0.0.1 >NUL & echo alive>{marker}\" & ping -n 30 127.0.0.1 >NUL\""
+            "\"start \"\" /B cmd /C \"echo up>{started} & ping -n 3 127.0.0.1 >NUL & echo alive>{marker}\" & ping -n 30 127.0.0.1 >NUL\""
         ))
     } else {
-        shell(&format!("(sleep 2; touch '{marker}') & sleep 30"))
+        shell(&format!(
+            "(touch '{started}'; sleep 2; touch '{marker}') & sleep 30"
+        ))
+    }
+}
+
+/// Waits until `path` exists. A fixed sleep is not enough: under parallel test load the shell can
+/// take longer to start the grandchild, and stopping the child before then proves nothing.
+fn wait_for(path: &Path) {
+    let until = Instant::now() + Duration::from_secs(10);
+    while !path.exists() {
+        assert!(Instant::now() < until, "{} never appeared", path.display());
+        sleep(Duration::from_millis(20));
     }
 }
 
@@ -98,9 +111,9 @@ fn waiting_stops_at_the_deadline_and_leaves_the_sidecar_running() {
 #[test]
 fn shutdown_stops_what_the_sidecar_started() {
     let dir = temp_dir("shutdown");
-    let marker = dir.join("marker");
-    let sidecar = Sidecar::spawn(with_grandchild(&marker), Output::Discard).unwrap();
-    sleep(Duration::from_millis(700));
+    let (started, marker) = (dir.join("started"), dir.join("marker"));
+    let sidecar = Sidecar::spawn(with_grandchild(&started, &marker), Output::Discard).unwrap();
+    wait_for(&started);
     sidecar.shutdown(Duration::ZERO).unwrap();
     sleep(Duration::from_secs(4));
     assert!(
@@ -112,9 +125,9 @@ fn shutdown_stops_what_the_sidecar_started() {
 #[test]
 fn dropping_the_sidecar_stops_what_it_started() {
     let dir = temp_dir("drop");
-    let marker = dir.join("marker");
-    let sidecar = Sidecar::spawn(with_grandchild(&marker), Output::Discard).unwrap();
-    sleep(Duration::from_millis(700));
+    let (started, marker) = (dir.join("started"), dir.join("marker"));
+    let sidecar = Sidecar::spawn(with_grandchild(&started, &marker), Output::Discard).unwrap();
+    wait_for(&started);
     drop(sidecar);
     sleep(Duration::from_secs(4));
     assert!(
@@ -128,11 +141,11 @@ fn dropping_the_sidecar_stops_what_it_started() {
 #[test]
 fn killing_only_the_child_leaves_its_grandchild_running() {
     let dir = temp_dir("premise");
-    let marker = dir.join("marker");
-    let mut cmd = with_grandchild(&marker);
+    let (started, marker) = (dir.join("started"), dir.join("marker"));
+    let mut cmd = with_grandchild(&started, &marker);
     tauri_kit_sidecar::hide_console(&mut cmd);
     let mut child = cmd.spawn().unwrap();
-    sleep(Duration::from_millis(700));
+    wait_for(&started);
     child.kill().unwrap();
     child.wait().unwrap();
     let until = Instant::now() + Duration::from_secs(6);
