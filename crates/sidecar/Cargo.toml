@@ -1,6 +1,6 @@
 [package]
 name = "tauri-kit-sidecar"
-version = "0.1.0"
+version.workspace = true
 description = "Run a bundled helper process for a desktop app: no console window, no orphans, and a readiness wait that notices a crash."
 edition.workspace = true
 license.workspace = true

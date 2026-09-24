@@ -17,10 +17,16 @@ More capabilities will be added as separate crates.
 
 ```toml
 [dependencies]
-tauri-kit-fs = { git = "https://github.com/iyulab/tauri-kit", tag = "..." }
-tauri-kit-credentials = { git = "https://github.com/iyulab/tauri-kit", tag = "..." }
-tauri-kit-sidecar = { git = "https://github.com/iyulab/tauri-kit", tag = "..." }
+tauri-kit-fs = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.1.0" }
+tauri-kit-credentials = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.1.0" }
+tauri-kit-sidecar = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.1.0" }
 ```
+
+### Versioning
+
+The crates share one version and are released together. Each release is a `vX.Y.Z` tag on `main`, and
+the tag always equals the `version` in `Cargo.toml`. While the version is `0.x`, a minor bump (`0.1` → `0.2`)
+may break the API; a patch bump does not. Pin a tag, not a branch.
 
 ```rust
 use std::path::Path;
