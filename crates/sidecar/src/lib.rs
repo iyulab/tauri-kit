@@ -477,6 +477,20 @@ mod tree {
         Ok(Some(ExitStatus::from_raw(raw)))
     }
 
+    /// Whether the sidecar has exited, or does within a moment.
+    fn leader_exits(child: &mut Child) -> io::Result<bool> {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        loop {
+            if exit_status(child)?.is_some() {
+                return Ok(true);
+            }
+            if std::time::Instant::now() >= until {
+                return Ok(false);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
     pub fn request_stop(child: &Child) {
         // SAFETY: signalling a process group we created; failure (already gone) is harmless.
         unsafe { libc::killpg(child.id() as libc::pid_t, libc::SIGTERM) };
@@ -491,12 +505,14 @@ mod tree {
                 match err.raw_os_error() {
                     // The whole group is already gone.
                     Some(libc::ESRCH) => {}
-                    // macOS and the BSDs answer EPERM, not ESRCH, when every member left in the
-                    // group is a zombie — which is what the group is once the sidecar has exited
-                    // and is kept unreaped (see `exit_status`). A member still running as us would
-                    // have been signalled instead, so EPERM with an exited leader means there is
-                    // nothing left to stop.
-                    Some(libc::EPERM) if exit_status(child)?.is_some() => {}
+                    // macOS and the BSDs answer EPERM, not ESRCH, when no member of the group
+                    // can be signalled — every one is a zombie, or already on its way out. That is
+                    // what the group is once the sidecar has exited and is kept unreaped (see
+                    // `exit_status`), and also for the moment just after a SIGTERM, when the
+                    // sidecar is exiting but its exit is not visible yet. A member still running
+                    // as us would have been signalled instead, so EPERM with a leader that has
+                    // exited — or does within a moment — means there is nothing left to stop.
+                    Some(libc::EPERM) if leader_exits(child)? => {}
                     _ => return Err(err),
                 }
             }
