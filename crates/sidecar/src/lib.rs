@@ -488,9 +488,16 @@ mod tree {
             let rc = unsafe { libc::killpg(child.id() as libc::pid_t, libc::SIGKILL) };
             if rc != 0 {
                 let err = io::Error::last_os_error();
-                // ESRCH: the whole group is already gone.
-                if err.raw_os_error() != Some(libc::ESRCH) {
-                    return Err(err);
+                match err.raw_os_error() {
+                    // The whole group is already gone.
+                    Some(libc::ESRCH) => {}
+                    // macOS and the BSDs answer EPERM, not ESRCH, when every member left in the
+                    // group is a zombie — which is what the group is once the sidecar has exited
+                    // and is kept unreaped (see `exit_status`). A member still running as us would
+                    // have been signalled instead, so EPERM with an exited leader means there is
+                    // nothing left to stop.
+                    Some(libc::EPERM) if exit_status(child)?.is_some() => {}
+                    _ => return Err(err),
                 }
             }
             Ok(())
