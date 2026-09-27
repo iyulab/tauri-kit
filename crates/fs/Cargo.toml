@@ -11,3 +11,8 @@ categories = ["filesystem"]
 
 [dependencies]
 tempfile = "3"
+
+[features]
+# Observation points between the steps of a write, for tests of the app that uses this crate.
+# Enable it from [dev-dependencies] only; see `Writer::observe_steps`.
+test-hooks = []

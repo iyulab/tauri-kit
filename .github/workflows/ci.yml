@@ -35,11 +35,14 @@ jobs:
       - name: Format
         run: cargo fmt --all --check
 
+      # Twice: optional features (test hooks) add code, and leaving them out must not leave any unused.
       - name: Lint
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: |
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --all-features
 
   # The crates declare the oldest compiler they build with (`rust-version`). That promise is only
   # true while something builds with exactly that compiler, on every platform the crates target.
@@ -55,4 +58,4 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.89
 
       - name: Check with the declared minimum
-        run: cargo check --workspace --all-targets
+        run: cargo check --workspace --all-targets --all-features
