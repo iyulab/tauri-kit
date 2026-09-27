@@ -17,9 +17,9 @@ More capabilities will be added as separate crates.
 
 ```toml
 [dependencies]
-tauri-kit-fs = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.1.0" }
-tauri-kit-credentials = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.1.0" }
-tauri-kit-sidecar = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.1.0" }
+tauri-kit-fs = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.1.1" }
+tauri-kit-credentials = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.1.1" }
+tauri-kit-sidecar = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.1.1" }
 ```
 
 ### Versioning
