@@ -931,7 +931,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-kit-credentials"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "apple-native-keyring-store",
  "keyring-core",
@@ -941,14 +941,14 @@ dependencies = [
 
 [[package]]
 name = "tauri-kit-fs"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "tempfile",
 ]
 
 [[package]]
 name = "tauri-kit-sidecar"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "libc",
  "windows-sys",
