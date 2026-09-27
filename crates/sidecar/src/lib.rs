@@ -78,11 +78,14 @@ pub enum Output {
     /// Discarded.
     Discard,
     /// Appended line by line to these files, read on background threads so the child never blocks
-    /// on a full pipe. Bytes that are not valid UTF-8 are replaced rather than dropping the line.
+    /// on a full pipe. Missing parent directories are created. Lines are written as the child
+    /// printed them, line endings included; bytes that are not valid UTF-8 are replaced rather than
+    /// dropping the line. If a file cannot be opened, its stream is still drained, into nothing —
+    /// a log that cannot be written never stops the sidecar.
     Files { stdout: PathBuf, stderr: PathBuf },
     /// stdout is read line by line for [`Sidecar::wait_line`], and drained on a background thread
     /// for as long as the sidecar runs, so the child never blocks on a full pipe. stderr is appended
-    /// to a file, as with [`Output::Files`], or discarded.
+    /// to a file, as with [`Output::Files`] (parent directories included), or discarded.
     Lines { stderr: Option<PathBuf> },
 }
 
@@ -305,6 +308,9 @@ impl Drop for Sidecar {
 
 fn drain(stream: impl Read + Send + 'static, path: PathBuf) {
     thread::spawn(move || {
+        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+            let _ = std::fs::create_dir_all(dir);
+        }
         let Ok(mut file) = File::options().create(true).append(true).open(&path) else {
             // Nowhere to write: keep reading so the child never blocks on a full pipe.
             let _ = io::copy(&mut BufReader::new(stream), &mut io::sink());

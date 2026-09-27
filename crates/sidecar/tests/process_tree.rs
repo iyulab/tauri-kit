@@ -182,6 +182,33 @@ fn output_is_written_to_files() {
 }
 
 #[test]
+fn output_files_get_their_missing_directories() {
+    let dir = temp_dir("output-dirs");
+    let stdout = dir.join("logs").join("today").join("out.log");
+    let stderr = dir.join("other").join("err.log");
+    let mut sidecar = Sidecar::spawn(
+        shell("echo hello& echo oops 1>&2"),
+        Output::Files {
+            stdout: stdout.clone(),
+            stderr: stderr.clone(),
+        },
+    )
+    .unwrap();
+    sidecar
+        .wait_ready(Duration::from_secs(10), Duration::from_millis(20), || false)
+        .unwrap();
+    let until = Instant::now() + Duration::from_secs(5);
+    let read = |p: &Path| std::fs::read_to_string(p).unwrap_or_default();
+    while !(read(&stdout).contains("hello") && read(&stderr).contains("oops"))
+        && Instant::now() < until
+    {
+        sleep(Duration::from_millis(50));
+    }
+    assert!(read(&stdout).contains("hello"));
+    assert!(read(&stderr).contains("oops"));
+}
+
+#[test]
 fn a_sidecar_started_from_a_thread_outlives_that_thread() {
     // Apps start helpers from worker threads. Tying the helper's life to the spawning thread
     // (Linux PR_SET_PDEATHSIG does exactly that) would kill it as soon as the thread returns.
