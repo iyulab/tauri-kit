@@ -5,6 +5,19 @@ version. The format is based on [Keep a Changelog](https://keepachangelog.com/en
 project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while the version is
 `0.x`, a minor release may change the API).
 
+## [Unreleased]
+
+### Added
+
+- `tauri-kit-watch`: a new crate that watches a folder for changes made by other programs.
+  Notifications are debounced into batches and each path is reported once, as `Written` or
+  `Removed` according to what is on disk when the batch is delivered — a rename is the old path
+  removed and the new one written, and folders are not reported. `OwnWrites` records what the app
+  writes, and a change whose content is what the app last wrote there is left out, however many
+  notifications or batches the write takes. Temporary files of `tauri-kit-fs` and paths matched by
+  the app's `ignore` rule are left out. When the platform reports lost notifications the app gets
+  `Notice::Rescan`.
+
 ## [0.2.0] - 2026-09-27
 
 ### Added
