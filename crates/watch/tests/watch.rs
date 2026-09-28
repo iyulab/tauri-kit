@@ -199,3 +199,32 @@ fn refuses_a_root_that_is_not_a_folder() {
         .unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::NotADirectory);
 }
+
+#[test]
+fn a_live_watch_hears_its_probes_and_they_leave_nothing_behind() {
+    let h = watch(|w| w.probe_liveness(".state", Duration::from_millis(500)));
+    // Several probes, each heard: no rescan, and the probe files themselves are never reported.
+    h.nothing_for("probing a live watch");
+    let state = h.path(".state");
+    assert!(
+        fs::read_dir(&state).unwrap().count() <= 1,
+        "one probe file at a time"
+    );
+    drop(h._watcher);
+    assert_eq!(
+        fs::read_dir(&state).unwrap().count(),
+        0,
+        "the last probe is removed on stop"
+    );
+}
+
+#[test]
+fn refuses_a_probe_faster_than_the_debounce_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let err = Watch::new(dir.path())
+        .debounce(Duration::from_millis(300))
+        .probe_liveness(".state", Duration::from_millis(600))
+        .start(|_| {})
+        .unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+}

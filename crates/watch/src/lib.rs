@@ -49,7 +49,8 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{mpsc, Arc, Mutex, MutexGuard};
+use std::thread;
 use std::time::Duration;
 use std::{fmt, fs, io};
 
@@ -95,6 +96,7 @@ pub struct Watch {
     debounce: Duration,
     ignore: Option<IgnoreRule>,
     own: Option<OwnWrites>,
+    probe: Option<(PathBuf, Duration)>,
 }
 
 impl fmt::Debug for Watch {
@@ -104,6 +106,7 @@ impl fmt::Debug for Watch {
             .field("debounce", &self.debounce)
             .field("ignore", &self.ignore.is_some())
             .field("own_writes", &self.own.is_some())
+            .field("probe", &self.probe)
             .finish()
     }
 }
@@ -116,6 +119,7 @@ impl Watch {
             debounce: DEFAULT_DEBOUNCE,
             ignore: None,
             own: None,
+            probe: None,
         }
     }
 
@@ -139,11 +143,27 @@ impl Watch {
         self
     }
 
+    /// Checks every `every` that the watch is still running, and restarts it if it is not.
+    ///
+    /// On Windows the platform stops a watch when its buffer of changes overflows — a burst of
+    /// changes, a sync client catching up — and nothing says so: the watch just goes quiet. With a
+    /// probe the watcher writes a short-lived file into `folder` (relative to the watched folder,
+    /// and created if missing) and expects to hear about it; when two probes in a row go unheard it
+    /// starts the watch again and sends [`Notice::Rescan`]. Choose a folder the app owns, such as
+    /// its hidden state folder. The probe files are named like `tauri-kit-fs` temporary files, so
+    /// they are never reported and `sweep_staging` removes any a crash leaves behind; one probe file
+    /// is there at a time. `every` must be longer than twice the debounce window — minutes suit a
+    /// real app.
+    pub fn probe_liveness(mut self, folder: impl Into<PathBuf>, every: Duration) -> Self {
+        self.probe = Some((folder.into(), every));
+        self
+    }
+
     /// Starts watching. `on_notice` runs on the watcher's own thread, once per batch.
     ///
     /// The watched tree is listed once before watching starts, which takes a moment for a large
     /// folder.
-    pub fn start(self, mut on_notice: impl FnMut(Notice) + Send + 'static) -> io::Result<Watcher> {
+    pub fn start(self, on_notice: impl FnMut(Notice) + Send + 'static) -> io::Result<Watcher> {
         let root = resolved(&self.root)?;
         if !root.is_dir() {
             return Err(io::Error::new(
@@ -151,33 +171,93 @@ impl Watch {
                 format!("{} is not a folder", root.display()),
             ));
         }
-        let mut resolver = Resolver::new(root.clone(), self.ignore, self.own);
-        let mut debouncer =
-            new_debouncer(self.debounce, None, move |result: DebounceEventResult| {
-                if let Some(notice) = resolver.notice(result) {
-                    on_notice(notice);
-                }
-            })
-            .map_err(notify_error)?;
-        debouncer
-            .watch(&root, RecursiveMode::Recursive)
-            .map_err(notify_error)?;
-        Ok(Watcher {
-            root,
-            _debouncer: debouncer,
-        })
+        let shared = Arc::new(Shared {
+            resolver: Mutex::new(Resolver::new(root.clone(), self.ignore, self.own)),
+            on_notice: Mutex::new(Box::new(on_notice)),
+            liveness: Mutex::new(Liveness::default()),
+            root: root.clone(),
+            debounce: self.debounce,
+        });
+        if let Some((_, every)) = &self.probe {
+            if *every <= self.debounce * 2 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "the liveness probe interval must be longer than twice the debounce window",
+                ));
+            }
+        }
+        let inner = Arc::new(Mutex::new(Some(shared.watch()?)));
+        let probe = match self.probe {
+            Some((folder, every)) => Some(Probe::start(
+                Arc::clone(&shared),
+                Arc::clone(&inner),
+                root.join(folder),
+                every,
+            )?),
+            None => None,
+        };
+        Ok(Watcher { root, inner, probe })
     }
+}
+
+type Handler = Box<dyn FnMut(Notice) + Send>;
+type PlatformWatch = Debouncer<RecommendedWatcher, RecommendedCache>;
+
+/// What the platform watch's callback and the probe share.
+struct Shared {
+    root: PathBuf,
+    debounce: Duration,
+    resolver: Mutex<Resolver>,
+    on_notice: Mutex<Handler>,
+    liveness: Mutex<Liveness>,
+}
+
+impl Shared {
+    /// Starts a platform watch that delivers to this.
+    fn watch(self: &Arc<Self>) -> io::Result<PlatformWatch> {
+        let shared = Arc::clone(self);
+        let mut watch = new_debouncer(self.debounce, None, move |result| shared.deliver(result))
+            .map_err(notify_error)?;
+        watch
+            .watch(&self.root, RecursiveMode::Recursive)
+            .map_err(notify_error)?;
+        Ok(watch)
+    }
+
+    fn deliver(&self, result: DebounceEventResult) {
+        if let Ok(events) = &result {
+            relock(&self.liveness).observe(events);
+        }
+        let notice = relock(&self.resolver).notice(result);
+        if let Some(notice) = notice {
+            self.tell(notice);
+        }
+    }
+
+    fn tell(&self, notice: Notice) {
+        (relock(&self.on_notice))(notice);
+    }
+}
+
+/// A lock that a panic elsewhere does not make unusable: the data it guards stays consistent
+/// between the steps that take it.
+fn relock<T: ?Sized>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// A running watch. Dropping it stops watching.
 pub struct Watcher {
     root: PathBuf,
-    _debouncer: Debouncer<RecommendedWatcher, RecommendedCache>,
+    inner: Arc<Mutex<Option<PlatformWatch>>>,
+    probe: Option<Probe>,
 }
 
 impl fmt::Debug for Watcher {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Watcher").field("root", &self.root).finish()
+        f.debug_struct("Watcher")
+            .field("root", &self.root)
+            .field("probe", &self.probe.is_some())
+            .finish()
     }
 }
 
@@ -186,6 +266,137 @@ impl Watcher {
     pub fn root(&self) -> &Path {
         &self.root
     }
+}
+
+impl Drop for Watcher {
+    fn drop(&mut self) {
+        // The probe first: it could otherwise start a new platform watch while this one stops.
+        self.probe.take();
+        relock(&self.inner).take();
+    }
+}
+
+/// Probes missed in a row before the watch is taken for dead: one can go unheard because a slow
+/// disk or a long batch delayed it.
+const MISSES_BEFORE_RESTART: u32 = 2;
+
+/// Whether the latest probe was heard.
+#[derive(Default)]
+struct Liveness {
+    /// The file name of the probe in flight.
+    pending: Option<OsString>,
+    heard: bool,
+    misses: u32,
+}
+
+impl Liveness {
+    /// Starts a probe named `name`; returns whether the watch is to be taken for dead, judging by
+    /// the probes before it.
+    fn arm(&mut self, name: OsString) -> bool {
+        if self.pending.is_some() && !self.heard {
+            self.misses += 1;
+        } else {
+            self.misses = 0;
+        }
+        self.pending = Some(name);
+        self.heard = false;
+        self.misses >= MISSES_BEFORE_RESTART
+    }
+
+    fn observe(&mut self, events: &[DebouncedEvent]) {
+        let Some(pending) = &self.pending else {
+            return;
+        };
+        if events
+            .iter()
+            .flat_map(|e| e.paths.iter())
+            .any(|p| p.file_name() == Some(pending.as_os_str()))
+        {
+            self.heard = true;
+        }
+    }
+
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
+/// The thread that probes the watch. Dropping it stops the thread.
+struct Probe {
+    stop: Option<mpsc::Sender<()>>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl Probe {
+    fn start(
+        shared: Arc<Shared>,
+        inner: Arc<Mutex<Option<PlatformWatch>>>,
+        folder: PathBuf,
+        every: Duration,
+    ) -> io::Result<Self> {
+        let (stop, stopped) = mpsc::channel::<()>();
+        let thread = thread::Builder::new()
+            .name("tauri-kit-watch-probe".into())
+            .spawn(move || {
+                let mut count: u64 = 0;
+                // A probe stays until the next one: made and removed within one batch, the two
+                // notifications would cancel out and the probe would never be heard.
+                let mut last: Option<PathBuf> = None;
+                // Anything on the channel, or the watcher dropping its end, stops the probe.
+                while let Err(mpsc::RecvTimeoutError::Timeout) = stopped.recv_timeout(every) {
+                    count += 1;
+                    let name = OsString::from(format!(
+                        "{}watch-probe-{}-{count}",
+                        tauri_kit_fs::TEMP_PREFIX,
+                        std::process::id()
+                    ));
+                    if relock(&shared.liveness).arm(name.clone()) {
+                        restart(&shared, &inner);
+                    }
+                    if let Some(previous) = last.take() {
+                        let _ = fs::remove_file(previous);
+                    }
+                    let path = folder.join(&name);
+                    // A probe that cannot be written is simply not heard; enough of them restart
+                    // the watch, which is also the right answer to a folder that went away.
+                    if fs::create_dir_all(&folder)
+                        .and_then(|()| fs::write(&path, b""))
+                        .is_ok()
+                    {
+                        last = Some(path);
+                    }
+                }
+                if let Some(previous) = last {
+                    let _ = fs::remove_file(previous);
+                }
+            })?;
+        Ok(Self {
+            stop: Some(stop),
+            thread: Some(thread),
+        })
+    }
+}
+
+impl Drop for Probe {
+    fn drop(&mut self) {
+        self.stop.take();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// Replaces a watch that went quiet with a new one, and tells the app to read everything again.
+fn restart(shared: &Arc<Shared>, inner: &Mutex<Option<PlatformWatch>>) {
+    let Ok(fresh) = shared.watch() else {
+        // Not now (the folder may be gone); the next probes try again.
+        return;
+    };
+    let stale = relock(inner).replace(fresh);
+    drop(stale);
+    relock(&shared.resolver).reindex();
+    relock(&shared.liveness).reset();
+    shared.tell(Notice::Rescan);
 }
 
 /// What the app last wrote to each path, so its own writes are not reported back to it.
@@ -630,5 +841,58 @@ mod tests {
         );
         let root = r.root.clone();
         assert!(r.folders[&root].contains_key(&OsString::from("a.md")));
+    }
+
+    #[test]
+    fn two_unheard_probes_in_a_row_mean_the_watch_is_dead() {
+        let mut l = Liveness::default();
+        assert!(!l.arm("a".into()), "nothing was pending");
+        assert!(!l.arm("b".into()), "one miss is tolerated");
+        assert!(l.arm("c".into()), "two in a row are not");
+        l.reset();
+        assert!(!l.arm("d".into()));
+        let heard = event(
+            EventKind::Create(CreateKind::File),
+            PathBuf::from("x").join("d"),
+        );
+        l.observe(&[heard]);
+        assert!(!l.arm("e".into()), "a heard probe clears the misses");
+        assert_eq!(l.misses, 0);
+    }
+
+    #[test]
+    fn a_watch_that_went_quiet_is_restarted_and_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let (tx, notices) = std::sync::mpsc::channel();
+        let watcher = Watch::new(dir.path())
+            .debounce(Duration::from_millis(50))
+            .probe_liveness(".state", Duration::from_millis(150))
+            .start(move |n| {
+                let _ = tx.send(n);
+            })
+            .unwrap();
+        // What an overflowing buffer does on Windows: the platform watch stops, silently.
+        relock(&watcher.inner).take();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match notices.recv_timeout(left) {
+                Ok(Notice::Rescan) => break,
+                Ok(_) => continue,
+                Err(_) => panic!("no rescan after the watch went quiet"),
+            }
+        }
+        fs::write(dir.path().join("after.md"), "x").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match notices.recv_timeout(left) {
+                Ok(Notice::Changed(c)) if c.iter().any(|c| c.path == Path::new("after.md")) => {
+                    break
+                }
+                Ok(_) => continue,
+                Err(_) => panic!("the restarted watch does not report changes"),
+            }
+        }
     }
 }

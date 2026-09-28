@@ -19,7 +19,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   writes, and a change whose content is what the app last wrote there is left out, however many
   notifications or batches the write takes. Temporary files of `tauri-kit-fs` and paths matched by
   the app's `ignore` rule are left out. When the platform reports lost notifications the app gets
-  `Notice::Rescan`.
+  `Notice::Rescan`. `Watch::probe_liveness` checks that the watch is still running — on Windows a
+  platform watch stops without a word when its buffer of changes overflows — by writing a
+  short-lived probe file into a folder the app names; two unheard probes in a row restart the watch
+  and send `Notice::Rescan`.
 
 ## [0.2.0] - 2026-09-27
 
