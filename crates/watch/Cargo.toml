@@ -11,7 +11,7 @@ categories = ["filesystem"]
 
 [dependencies]
 notify-debouncer-full = "0.7"
-tauri-kit-fs = { path = "../fs", version = "0.3.0" }
+tauri-kit-fs = { path = "../fs", version = "0.4.0" }
 
 [dev-dependencies]
 tempfile = "3"

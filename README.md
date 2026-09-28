@@ -18,10 +18,10 @@ More capabilities will be added as separate crates.
 
 ```toml
 [dependencies]
-tauri-kit-fs = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.3.0" }
-tauri-kit-credentials = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.3.0" }
-tauri-kit-sidecar = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.3.0" }
-tauri-kit-watch = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.3.0" }
+tauri-kit-fs = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.4.0" }
+tauri-kit-credentials = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.4.0" }
+tauri-kit-sidecar = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.4.0" }
+tauri-kit-watch = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.4.0" }
 ```
 
 Take the crates you need in one edit. Cargo re-resolves everything reachable from a git source's
