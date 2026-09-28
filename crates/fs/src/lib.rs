@@ -26,6 +26,9 @@
 //! before giving up. [`patiently`] offers the same to the app's own file operations. Elsewhere it
 //! runs the operation once.
 //!
+//! Sync clients keep both sides of a conflicting change, the second under a marked name;
+//! [`conflict_copy_of`] recognises those names and says which file each is a copy of.
+//!
 //! [`Writer`] holds the options — staging directory, temp-file prefix, patience — for apps that
 //! write the same way from several places.
 //!
@@ -44,6 +47,9 @@ use std::path::{Component, Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::NamedTempFile;
+
+mod conflict;
+pub use conflict::conflict_copy_of;
 
 /// Prefix of every temporary file this crate creates, unless the app chooses its own with
 /// [`Writer::temp_prefix`]. [`sweep_staging`] removes only files that carry it, so a staging

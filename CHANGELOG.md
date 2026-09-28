@@ -5,6 +5,18 @@ version. The format is based on [Keep a Changelog](https://keepachangelog.com/en
 project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while the version is
 `0.x`, a minor release may change the API).
 
+## [Unreleased]
+
+### Added
+
+- `tauri-kit-fs`: `conflict_copy_of` recognises the copies sync clients make when a file changed on
+  two devices — Syncthing's `.sync-conflict-<date>-<time>-<device>`, and the parenthesized
+  `(… conflicted copy …)` of Dropbox (including the Korean `충돌된 사본`), Nextcloud, ownCloud and
+  Google Drive — and returns the name of the file each is a copy of. The marker goes in front of
+  the last extension, so a copy of a file with a compound suffix no longer ends in that suffix;
+  an app that filters a listing by it can ask for the original's name instead. OneDrive's
+  `name-ComputerName` is not recognised: it cannot be told apart from a name a person chose.
+
 ## [0.3.0] - 2026-09-28
 
 ### Added
