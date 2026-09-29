@@ -5,6 +5,14 @@ version. The format is based on [Keep a Changelog](https://keepachangelog.com/en
 project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while the version is
 `0.x`, a minor release may change the API).
 
+## [Unreleased]
+
+### Documentation
+
+- `tauri-kit-watch`: a file made and removed again within one debounce window is not reported at
+  all — the notifications cancel out before the batch is delivered. The crate documentation says
+  so, instead of implying every path touched is reported.
+
 ## [0.4.0] - 2026-09-29
 
 ### Added

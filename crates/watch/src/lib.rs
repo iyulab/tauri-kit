@@ -14,6 +14,8 @@
 //!   Notifications only say where to look: the watcher keeps a listing of the watched tree and
 //!   compares the folders a batch touches with it, so a file the platform did not announce — one
 //!   made in a folder that was itself just made, or the old name of a rename — is still reported.
+//!   A file made and removed again within one window is no change and is not reported at all: an
+//!   app that read the folder in between should not expect to hear that it went.
 //! - **The app's own writes left out**: record what the app writes with [`OwnWrites::record`], and
 //!   a change whose content is what the app last wrote there is not reported — however many
 //!   notifications or batches the write took.
