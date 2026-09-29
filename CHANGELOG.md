@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- `tauri-kit-fs`: `rename_new(from, to)` moves a file to a new name only if nothing is there —
+  `AlreadyExists` otherwise, with both names left as they were. It is a rename, so the file keeps
+  its creation time and a sync client sees a move. On Windows it is one `MoveFileExW` that does not
+  replace; elsewhere a link under the new name, then an unlink of the old. Transient refusals are
+  retried like the writes.
+
 ### Documentation
 
 - `tauri-kit-watch`: a file made and removed again within one debounce window is not reported at

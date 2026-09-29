@@ -12,6 +12,9 @@ categories = ["filesystem"]
 [dependencies]
 tempfile = "3"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
 [features]
 # Observation points between the steps of a write, for tests of the app that uses this crate.
 # Enable it from [dev-dependencies] only; see `Writer::observe_steps`.

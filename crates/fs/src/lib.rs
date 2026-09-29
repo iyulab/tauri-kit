@@ -93,6 +93,47 @@ pub fn write_atomic_new_staged(path: &Path, content: &[u8], staging: &Path) -> i
     Writer::new().staging(staging).write_new(path, content)
 }
 
+/// Moves the file at `from` to `to`, but only if nothing is at `to`.
+///
+/// It is a rename, not a copy: the file stays the same file — its creation time, and its history in
+/// a sync client, which sees a move rather than a new file and a deleted one. If anything exists at
+/// `to` — a file, a directory, a symbolic link — this fails with [`io::ErrorKind::AlreadyExists`] and
+/// both names are left as they were; the check and the move are one step, so two apps racing for the
+/// same name cannot both succeed. Both must be on the same volume. Transient refusals
+/// ([`is_transient`]) are retried for [`DEFAULT_PATIENCE`].
+///
+/// On Windows this is one `MoveFileExW` that does not replace. Elsewhere the file is linked under the
+/// new name, which fails if the name is taken, and then unlinked from the old one: a crash between
+/// the two leaves the file under both names, never under neither.
+pub fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
+    patiently(|| move_noclobber(from, to))?;
+    sync_parent(to)?;
+    if parent_of(from)? != parent_of(to)? {
+        sync_parent(from)?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn move_noclobber(from: &Path, to: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_WRITE_THROUGH};
+    let wide = |p: &Path| p.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<u16>>();
+    let (from, to) = (wide(from), wide(to));
+    // Without MOVEFILE_REPLACE_EXISTING the move fails if the target exists.
+    // SAFETY: both are NUL-terminated wide strings that outlive the call.
+    if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), MOVEFILE_WRITE_THROUGH) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn move_noclobber(from: &Path, to: &Path) -> io::Result<()> {
+    fs::hard_link(from, to)?;
+    fs::remove_file(from)
+}
+
 /// Removes temporary files left in `staging` by writes that never finished (a crash or power loss
 /// between creating the temp file and renaming it). Call it once at startup.
 ///
@@ -537,6 +578,36 @@ mod tests {
         assert_eq!(fs::read_to_string(&f).unwrap(), "body");
         assert_eq!(names(&content), vec!["page.md"]);
         assert!(names(&staging).is_empty(), "the temp file was renamed away");
+    }
+
+    #[test]
+    fn a_new_name_move_keeps_the_file_and_its_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a.md"), dir.path().join("b.md"));
+        fs::write(&a, "body").unwrap();
+        rename_new(&a, &b).unwrap();
+        assert_eq!(fs::read_to_string(&b).unwrap(), "body");
+        assert_eq!(names(dir.path()), vec!["b.md"]);
+    }
+
+    #[test]
+    fn a_new_name_move_never_replaces_what_is_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a.md"), dir.path().join("b.md"));
+        fs::write(&a, "mine").unwrap();
+        fs::write(&b, "theirs").unwrap();
+        let err = rename_new(&a, &b).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&a).unwrap(), "mine");
+        assert_eq!(fs::read_to_string(&b).unwrap(), "theirs");
+    }
+
+    #[test]
+    fn a_new_name_move_fails_when_the_file_is_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = rename_new(&dir.path().join("gone.md"), &dir.path().join("b.md")).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(names(dir.path()).is_empty());
     }
 
     #[test]
