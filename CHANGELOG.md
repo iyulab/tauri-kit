@@ -12,6 +12,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - `tauri-kit-watch`: a file made and removed again within one debounce window is not reported at
   all — the notifications cancel out before the batch is delivered. The crate documentation says
   so, instead of implying every path touched is reported.
+- `tauri-kit-watch`: on Windows the `notify` 8 release underneath does not report an overflow —
+  the batch is dropped, or the watch stops. The documentation of `Notice::Rescan` and
+  `Watch::probe_liveness` says so, says that a probe catches only a watch that stopped, and says
+  that in a synced folder the probe file can reach other devices.
 
 ## [0.4.0] - 2026-09-29
 

@@ -22,7 +22,10 @@
 //! - **Temporary files left out**: files named the way `tauri-kit-fs` names its temporary files,
 //!   and anything the app's [`Watch::ignore`] rule matches.
 //! - **Honest about loss**: when the platform says notifications were dropped, the app gets
-//!   [`Notice::Rescan`] and should read the folder again instead of trusting what it knows.
+//!   [`Notice::Rescan`] and should read the folder again instead of trusting what it knows. On
+//!   Windows the `notify` 8 release this crate builds on does not pass an overflow on: the batch is
+//!   dropped, or the watch stops, and nothing is reported. [`Watch::probe_liveness`] catches a
+//!   watch that stopped.
 //!
 //! ```no_run
 //! use tauri_kit_watch::{Notice, OwnWrites, Watch};
@@ -147,15 +150,20 @@ impl Watch {
 
     /// Checks every `every` that the watch is still running, and restarts it if it is not.
     ///
-    /// On Windows the platform stops a watch when its buffer of changes overflows — a burst of
-    /// changes, a sync client catching up — and nothing says so: the watch just goes quiet. With a
-    /// probe the watcher writes a short-lived file into `folder` (relative to the watched folder,
-    /// and created if missing) and expects to hear about it; when two probes in a row go unheard it
-    /// starts the watch again and sends [`Notice::Rescan`]. Choose a folder the app owns, such as
-    /// its hidden state folder. The probe files are named like `tauri-kit-fs` temporary files, so
-    /// they are never reported and `sweep_staging` removes any a crash leaves behind; one probe file
-    /// is there at a time. `every` must be longer than twice the debounce window — minutes suit a
-    /// real app.
+    /// On Windows a watch can stop when its buffer of changes overflows — a burst of changes, a
+    /// sync client catching up — and nothing says so: the watch just goes quiet. With a probe the
+    /// watcher writes a short-lived file into `folder` (relative to the watched folder, and created
+    /// if missing) and expects to hear about it; when two probes in a row go unheard it starts the
+    /// watch again and sends [`Notice::Rescan`]. Choose a folder the app owns, such as its hidden
+    /// state folder. The probe files are named like `tauri-kit-fs` temporary files, so they are
+    /// never reported and `sweep_staging` removes any a crash leaves behind; one probe file is there
+    /// at a time. `every` must be longer than twice the debounce window — minutes suit a real app.
+    ///
+    /// A probe proves only that the watch is running: an overflow that drops a batch while the
+    /// watch keeps running goes unnoticed. And the probe file is written inside the watched tree —
+    /// in a folder a sync client mirrors, a probe that lives long enough to be uploaded reaches the
+    /// other devices. An app watching a synced folder may prefer to read the folder again at
+    /// moments it chooses, such as when its window regains focus, over probing it.
     pub fn probe_liveness(mut self, folder: impl Into<PathBuf>, every: Duration) -> Self {
         self.probe = Some((folder.into(), every));
         self
@@ -873,7 +881,7 @@ mod tests {
                 let _ = tx.send(n);
             })
             .unwrap();
-        // What an overflowing buffer does on Windows: the platform watch stops, silently.
+        // What an overflowing buffer can do on Windows: the platform watch stops, silently.
         relock(&watcher.inner).take();
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
