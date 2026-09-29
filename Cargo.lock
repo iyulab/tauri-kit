@@ -1050,7 +1050,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-kit-credentials"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "apple-native-keyring-store",
  "keyring-core",
@@ -1060,7 +1060,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-kit-fs"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "tempfile",
  "windows-sys 0.61.2",
@@ -1068,7 +1068,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-kit-sidecar"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -1076,7 +1076,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-kit-watch"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "notify-debouncer-full",
  "tauri-kit-fs",
