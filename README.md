@@ -13,7 +13,7 @@ apps end up writing for themselves, each in its own small crate so an app takes 
 | [`tauri-kit-watch`](crates/watch) | **Changes made by other programs, and only those.** A folder watch that gathers the platform's notifications into batches and reports each changed path once, as it now is on disk — written or removed. The app's own writes are left out by their content, however many notifications a write takes; `tauri-kit-fs` temporary files and paths the app names are ignored; and when the platform drops notifications — or a path the app names changes, such as the branch a repository has checked out — the app is told to read the folder again. |
 | [`tauri-kit-diagnostics`](crates/diagnostics) | **Error reports that carry no content.** A report is built from an allowlist only — the layer that failed, the kind of failure when it is a plain identifier, and the frames of the app's own code (scripts of its web bundle, its Rust source, .NET method names) — never from a message, so a path, a file name or a value the person typed cannot leave the device in one. Each launch writes each failure once and caps how many it writes, to a JSON Lines file the person can read — exactly what would be sent — kept from growing without end. An opt-in `appinsights` feature sends what the file gained since the last send to Azure Application Insights, through the OS's TLS and certificate store and system proxy, and keeps for the next launch what the endpoint could not take yet. |
 
-More capabilities will be added as separate crates.
+More capabilities will be added as separate crates. What belongs here, and what deliberately does not, is in [SCOPE.md](SCOPE.md).
 
 ## Usage
 

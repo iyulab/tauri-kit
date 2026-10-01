@@ -35,6 +35,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   Application Insights connection string and `Sink::send_pending` sends what the file gained since
   the last send in batches, stopping on 408, 429 and 5xx answers so those reports go out later.
 
+### Added
+
+- `SCOPE.md`: what the crates own (runtime platform behaviour that ships inside an app), what they
+  deliberately leave to callers (tools, caller constants and wording, domain meaning, interface
+  components), and the questions that decide which side a proposed capability falls on.
+
 ### Changed
 
 - `tauri-kit-fs`: `rename_new` also moves folders, with the same promise — it never replaces
