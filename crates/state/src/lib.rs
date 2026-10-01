@@ -23,7 +23,7 @@
 //! use tauri_kit_state::folder_key;
 //!
 //! # fn app_data_dir() -> std::path::PathBuf { unimplemented!() }
-//! let folder = Path::new("/home/kim/Projects/garden");
+//! let folder = Path::new("Projects/garden");
 //! let state = app_data_dir().join("folders").join(folder_key(folder));
 //! ```
 

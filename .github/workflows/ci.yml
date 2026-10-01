@@ -49,6 +49,31 @@ jobs:
       - name: Test
         run: cargo test --workspace --all-features
 
+  # Public text: no local paths, private hosts or traces of a consumer's private workspace, in
+  # tracked files and in commit messages (see CONTRIBUTING.md). The check comes from tauri-kit-dev,
+  # pinned to a commit so a change there cannot turn this red unannounced.
+  public-text:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The check reads commit messages too.
+          fetch-depth: 0
+
+      - uses: actions/checkout@v7
+        with:
+          repository: iyulab/tauri-kit-dev
+          ref: a71571ecd02e95022fd96469232e6fd0f2946753
+          path: .tauri-kit-dev
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Check public text
+        run: node .tauri-kit-dev/bin/tauri-kit-dev.js public-text --config scripts/public-text.config.js .
+
   # The crates declare the oldest compiler they build with (`rust-version`). That promise is only
   # true while something builds with exactly that compiler, on every platform the crates target.
   msrv:

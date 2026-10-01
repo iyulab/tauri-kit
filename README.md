@@ -61,6 +61,10 @@ let credentials = Credentials::new("com.example.app", build_kind!());
 credentials.set("api-key", "s3cret")?;
 ```
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) — start with the scope.
+
 ## License
 
 [MIT](LICENSE)

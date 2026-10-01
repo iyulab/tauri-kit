@@ -24,6 +24,8 @@ the failures are quiet, platform-specific, and found late:
   the loopback arrangement an HTTP helper needs (with its .NET host side in `dotnet/`)
 - **Secrets** — the operating system's credential store, with test and development builds kept off
   the installed app's entries
+- **Per-folder state** — what the app keeps for each folder a person opens, outside that folder:
+  a stable name for it, a format that older releases leave alone, writes kept until they land
 - **Error reports** — what failed and where in the app's own code, never what it was about, kept
   where the person can read it before anything is sent
 
