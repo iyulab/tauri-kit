@@ -7,6 +7,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Fixed
+
+- `tauri-kit-diagnostics`: `WebBundle` keeps frames of a bundle served as `tauri://localhost/…`, as
+  Tauri serves it on macOS and Linux — they were all dropped. `WebBundle::schemes` names the custom
+  schemes only the app serves (default `tauri`), on which any host is the app's own; `http` and
+  `https` still go by host.
+- `tauri-kit-diagnostics`: `RustSource` keeps frames in folders below the source root
+  (`src/commands/open.rs` → `commands/open.rs:12:5`); only a file directly under it was kept. Each
+  folder must be a plain ASCII name, never `.` or `..`.
+
 ## [0.8.0] - 2026-10-01
 
 ### Fixed

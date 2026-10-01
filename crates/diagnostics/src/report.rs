@@ -176,9 +176,19 @@ impl FrameRule {
             }
             FrameRule::RustSource(rule) => {
                 let (path, at) = position(location)?;
-                let file = rule.strip_root(path)?;
-                let file = source_file(file, &rule.extensions)?;
-                Some(format!("{file}:{at}"))
+                let rest = rule.strip_root(path)?;
+                let mut segments: Vec<&str> = rest.split(['/', '\\']).collect();
+                let file = source_file(segments.pop()?, &rule.extensions)?;
+                // Folders inside the crate's own source are kept, each a plain name as a file is —
+                // never `.` or `..`, so a frame cannot climb out of the source root.
+                let folders_plain = segments
+                    .iter()
+                    .all(|s| plain_name(s) && !s.starts_with('.'));
+                if !folders_plain {
+                    return None;
+                }
+                segments.push(file);
+                Some(format!("{}:{at}", segments.join("/")))
             }
         }
     }
@@ -201,13 +211,15 @@ impl From<RustSource> for FrameRule {
 /// A frame is kept only when its script URL is `http://` or `https://` on one of the app's own
 /// hosts (by default `tauri.localhost`, where Tauri serves the bundle on Windows) or, with
 /// [`WebBundle::dev_server`] on (the default), `localhost:<port>` — the dev server while
-/// developing. The path must start with one of the prefixes (by default `assets/`, where a
+/// developing — or is on one of the app's own schemes, whatever the host (by default `tauri`, as
+/// in `tauri://localhost`, where Tauri serves the bundle on macOS and Linux). The path must start with one of the prefixes (by default `assets/`, where a
 /// bundler puts built scripts, or `src/`, where a dev server serves sources), which is dropped,
 /// and what is left must be a plain file name with one of the extensions (by default `.js`,
 /// `.mjs`, `.ts`). A function name that is not a plain identifier path is written as `?`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebBundle {
     hosts: Vec<String>,
+    schemes: Vec<String>,
     dev_server: bool,
     prefixes: Vec<String>,
     extensions: Vec<String>,
@@ -217,6 +229,7 @@ impl Default for WebBundle {
     fn default() -> Self {
         WebBundle {
             hosts: vec!["tauri.localhost".into()],
+            schemes: vec!["tauri".into()],
             dev_server: true,
             prefixes: vec!["assets/".into(), "src/".into()],
             extensions: vec![".js".into(), ".mjs".into(), ".ts".into()],
@@ -233,6 +246,21 @@ impl WebBundle {
         S: Into<String>,
     {
         self.hosts = hosts.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// The URL schemes only the app serves (a custom protocol), on which every host is the app's
+    /// own, replacing `tauri`. `http` and `https` are never among them — those go by host.
+    pub fn schemes<I, S>(mut self, schemes: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.schemes = schemes
+            .into_iter()
+            .map(Into::into)
+            .filter(|s| s != "http" && s != "https")
+            .collect();
         self
     }
 
@@ -265,9 +293,13 @@ impl WebBundle {
 
     /// The path of a script the app itself serves.
     fn own_path<'a>(&self, url: &'a str) -> Option<&'a str> {
-        let rest = url
-            .strip_prefix("http://")
-            .or_else(|| url.strip_prefix("https://"))?;
+        let (scheme, rest) = url.split_once("://")?;
+        if self.schemes.iter().any(|s| s == scheme) {
+            return rest.split_once('/').map(|(_, path)| path);
+        }
+        if scheme != "http" && scheme != "https" {
+            return None;
+        }
         let (authority, path) = rest.split_once('/')?;
         let (host, port) = match authority.split_once(':') {
             Some((host, port)) => (host, Some(port)),
@@ -293,9 +325,10 @@ impl WebBundle {
 /// Frames of the app's own Rust source, kept as `file.rs:line:col`.
 ///
 /// A frame is kept only when its location is a path under one of the source roots (by default
-/// `src`, separated by `/` or `\` — a panic's location is relative to the crate) followed by a
-/// plain file name with one of the extensions (by default `.rs`). Frames of other crates, which
-/// carry absolute paths into the build machine's registry, are dropped.
+/// `src`, separated by `/` or `\` — a panic's location is relative to the crate) followed by
+/// plain folder names, if any, and a plain file name with one of the extensions (by default
+/// `.rs`); it is written with `/` (`commands/open.rs:12:5`). Frames of other crates, which carry
+/// absolute paths into the build machine's registry, are dropped.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RustSource {
     roots: Vec<String>,
@@ -389,11 +422,15 @@ fn function_name(raw: &str) -> Option<&str> {
 
 /// A file's name, if it is a plain ASCII file name with one of `extensions`.
 fn source_file<'a>(raw: &'a str, extensions: &[String]) -> Option<&'a str> {
-    let plain = !raw.is_empty()
+    (plain_name(raw) && extensions.iter().any(|ext| raw.ends_with(ext.as_str()))).then_some(raw)
+}
+
+/// A file or folder name of ASCII letters, digits, `_`, `.` and `-` only.
+fn plain_name(raw: &str) -> bool {
+    !raw.is_empty()
         && raw
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'));
-    (plain && extensions.iter().any(|ext| raw.ends_with(ext.as_str()))).then_some(raw)
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
 }
 
 /// `file:line:col` split into the file and `line:col` (digits only).
@@ -495,6 +532,10 @@ mod tests {
                 "at Jane Müller (http://tauri.localhost/assets/index-a.js:1:1)\n/home/someone/Müller/client.rs:4:2",
             ),
             ("Jane Müller", "Jane Müller\nsrc/Müller.rs:1:1"),
+            (
+                "Error",
+                "at open (tauri://localhost/assets/notes/client.md:1:1)\nsrc/../someone/client.rs:1:1\nsrc/Jane Müller/a.rs:1:1",
+            ),
         ];
         for (kind, stack) in corpus {
             for layer in [ui(), host(), shell()] {
@@ -542,6 +583,30 @@ mod tests {
             VERSION,
         );
         assert!(report.frames.is_empty());
+    }
+
+    #[test]
+    fn keeps_frames_of_the_bundle_served_on_the_apps_own_scheme() {
+        let report = Report::new(
+            &ui(),
+            "TypeError",
+            "at save (tauri://localhost/assets/index-a.js:3:4)\nat b (asset://localhost/assets/x.js:1:1)\nat c (file:///home/someone/assets/x.js:1:1)",
+            VERSION,
+        );
+        assert_eq!(report.frames, ["save index-a.js:3:4"]);
+
+        let custom = Layer::new("ui", WebBundle::default().schemes(["app", "https"]));
+        let report = Report::new(
+            &custom,
+            "TypeError",
+            "at a (app://bundle/assets/a.js:1:1)\nat b (tauri://localhost/assets/b.js:1:1)\nat c (https://example.com/assets/c.js:1:1)\nat d (http://tauri.localhost/assets/d.js:1:1)",
+            VERSION,
+        );
+        assert_eq!(
+            report.frames,
+            ["a a.js:1:1", "d d.js:1:1"],
+            "https still goes by host"
+        );
     }
 
     #[test]
@@ -624,10 +689,27 @@ notes/client.md",
         let report = Report::new(
             &shell(),
             "Panic",
-            "src\\host.rs:120:9\nC:\\Users\\someone\\.cargo\\registry\\src\\ureq-3.0\\src\\lib.rs:5:1\nsrc/store.rs:88:13\nsrc/commands/open.rs:1:1",
+            "src\\host.rs:120:9\nC:\\Users\\someone\\.cargo\\registry\\src\\ureq-3.0\\src\\lib.rs:5:1\nsrc/store.rs:88:13\nsrc/commands/open.rs:1:1\nsrc\\commands\\vault\\save.rs:2:3",
             VERSION,
         );
-        assert_eq!(report.frames, ["host.rs:120:9", "store.rs:88:13"]);
+        assert_eq!(
+            report.frames,
+            [
+                "host.rs:120:9",
+                "store.rs:88:13",
+                "commands/open.rs:1:1",
+                "commands/vault/save.rs:2:3"
+            ]
+        );
+
+        // A folder is a plain name, never `.`/`..` or a path of its own.
+        let report = Report::new(
+            &shell(),
+            "Panic",
+            "src/../../Users/someone/a.rs:1:1\nsrc/./a.rs:1:1\nsrc/.hidden/a.rs:1:1\nsrc/Müller/a.rs:1:1\nsrc/my notes/a.rs:1:1\nsrc//a.rs:1:1\nsrc/C:/a.rs:1:1",
+            VERSION,
+        );
+        assert!(report.frames.is_empty(), "{:?}", report.frames);
 
         let custom = Layer::new("shell", RustSource::default().roots(["app/src"]));
         let report = Report::new(
