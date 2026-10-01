@@ -20,16 +20,16 @@ More capabilities will be added as separate crates. What belongs here, and what 
 
 ```toml
 [dependencies]
-tauri-kit-fs = "0.8"
-tauri-kit-credentials = "0.8"
-tauri-kit-sidecar = "0.8"
-tauri-kit-watch = "0.8"
-tauri-kit-diagnostics = "0.8"
-tauri-kit-webview = "0.8"
+tauri-kit-fs = "0.9"
+tauri-kit-credentials = "0.9"
+tauri-kit-sidecar = "0.9"
+tauri-kit-watch = "0.9"
+tauri-kit-diagnostics = "0.9"
+tauri-kit-webview = "0.9"
 ```
 
 The crates are published to crates.io. Depending on them from this repository instead
-(`{ git = "https://github.com/iyulab/tauri-kit", tag = "v0.8.0" }`) also works, but take the crates
+(`{ git = "https://github.com/iyulab/tauri-kit", tag = "v0.9.0" }`) also works, but take the crates
 you need in one edit: Cargo re-resolves everything reachable from a git source's already-locked
 crates when another crate from the same source is added later, which can move unrelated entries of
 `Cargo.lock` — crates that accept a range of versions of a shared dependency (such as `windows-sys`
