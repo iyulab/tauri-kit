@@ -115,6 +115,15 @@ fn requests_carry_the_token_and_statuses_come_back_as_answers() {
 }
 
 #[test]
+fn the_parts_keep_working_apart() {
+    let helper = Loopback::start(helper("serve"), &options()).unwrap();
+    let (mut sidecar, client) = helper.into_parts();
+    assert!(sidecar.is_running());
+    assert_eq!(client.get("/items").unwrap().status, 200);
+    sidecar.shutdown(Duration::ZERO).unwrap();
+}
+
+#[test]
 fn an_empty_post_carries_the_token_too() {
     let helper = Loopback::start(helper("serve"), &options()).unwrap();
     let posted = helper.client().post("/shutdown").unwrap();

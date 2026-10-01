@@ -14,7 +14,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   streamed answer). `Client::post(path)` posts with no body. `Client::post_json_stream(path, json)`
   reads the answer as it arrives: a `Stream` with the status, read line by line through `BufRead`
   (server-sent events). `LoopbackOptions::stdout` keeps the sidecar's stdout in a file, the
-  readiness line included.
+  readiness line included. `Loopback::into_parts()` hands over the process and the client apart, for an app
+  that keeps them in different places.
 - `tauri-kit-diagnostics`: an `appinsights-rustls` feature — the same `Sink`, with rustls doing the
   TLS handshake against the OS's certificate store (rustls-platform-verifier) and the system proxy
   as before. `appinsights` hands TLS to the OS's own stack, which is OpenSSL on Linux, so its lock

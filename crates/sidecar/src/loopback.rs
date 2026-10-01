@@ -179,6 +179,12 @@ impl Loopback {
         &mut self.sidecar
     }
 
+    /// The process and the client, apart — for an app that keeps the process where it stops it and
+    /// hands copies of the client to whatever makes requests.
+    pub fn into_parts(self) -> (Sidecar, Client) {
+        (self.sidecar, self.client)
+    }
+
     /// Stops the sidecar, waiting up to `grace` for it to exit on its own first.
     pub fn shutdown(self, grace: Duration) -> std::io::Result<std::process::ExitStatus> {
         self.sidecar.shutdown(grace)
