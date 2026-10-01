@@ -1,0 +1,54 @@
+name: Publish NuGet
+
+# Packs the .NET host side (dotnet/) from the release tag this runs on and pushes it to nuget.org.
+# The crates are published with cargo; this keeps the package under the same version.
+# Run by hand on a version tag: gh workflow run publish-nuget.yml --ref v<version>
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-nuget
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check the API key is available
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -z "$NUGET_API_KEY" ]; then echo "NUGET_API_KEY is not available to this repository"; exit 1; fi
+
+      - name: Refuse anything but a version tag
+        run: |
+          case "$GITHUB_REF" in refs/tags/v*) ;; *) echo "run this on a version tag, not $GITHUB_REF"; exit 1;; esac
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: dotnet/global.json
+
+      - name: Check the tag names the package version
+        run: |
+          version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' dotnet/Directory.Build.props)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then echo "tag $GITHUB_REF_NAME does not match version $version"; exit 1; fi
+
+      - name: Test
+        working-directory: dotnet
+        run: dotnet test --solution TauriKit.Sidecar.slnx -c Release
+
+      - name: Pack
+        working-directory: dotnet
+        run: dotnet pack src/TauriKit.Sidecar.Loopback/TauriKit.Sidecar.Loopback.csproj -c Release -o nupkg
+
+      - name: Push
+        working-directory: dotnet
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: dotnet nuget push "nupkg/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
