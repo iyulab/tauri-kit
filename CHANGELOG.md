@@ -17,6 +17,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   (`File::create_new`, `create_dir`, `write_atomic_new`, `rename_new`). `is_taken(path)` is the
   test both use: a symbolic link that points nowhere counts as taken, since creating or moving
   onto it is refused.
+- `tauri-kit-state`, a new crate for the state an app keeps for each folder a person opens,
+  outside that folder. `folder_key(folder)` names a directory for it: the folder's own name and a
+  digest of its resolved path, ignoring case on Windows and macOS; the key does not change between
+  releases. `Versioned::new(&steps)` keeps a format number (`format`) in a state directory:
+  `bring_up_to_date` runs the steps from the format found and writes the number last, so a step cut
+  short runs again; a format newer than the steps, or a format file that is not a number, is
+  `Format::Unknown` and is neither upgraded nor `writable`. `set_aside(dir, rel, now_secs)` moves a
+  file that cannot be read to `<rel>.unreadable-<secs>` without replacing anything. `Outbox` keeps
+  writes the app could not make yet as files (`<when>-<n>.<extension>`, oldest first) until it
+  forgets them; a file that cannot be read is left in place.
 
 ## [0.10.0] - 2026-10-01
 
