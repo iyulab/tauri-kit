@@ -39,7 +39,9 @@ or `getrandom`) may land on a different one.
 
 The crates share one version and are released together. Each release is a `vX.Y.Z` tag on `main`, and
 the tag always equals the `version` in `Cargo.toml`, and [CHANGELOG.md](CHANGELOG.md) lists what each release changed. While the version is `0.x`, a minor bump (`0.1` → `0.2`)
-may break the API; a patch bump does not. Pin a tag, not a branch.
+may break the API; a patch bump does not. Pin a tag, not a branch. The .NET package in `dotnet/` carries the same version: after the crates are
+published with `cargo publish --workspace`, the `Publish NuGet` workflow, run on the release tag
+(`gh workflow run publish-nuget.yml --ref vX.Y.Z`), tests, packs and pushes it.
 
 ```rust
 use std::path::Path;

@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- README: how the .NET package is released alongside the crates (the `Publish NuGet` workflow,
+  run on the release tag).
+
 ## [0.9.0] - 2026-10-01
 
 ### Changed
