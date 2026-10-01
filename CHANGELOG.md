@@ -7,6 +7,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- `tauri-kit-diagnostics`: `Report::detail(name, value)` adds one more fact about a failure — an
+  HTTP status, the app's own error code beside the type it came with — under a name the app
+  gives (an ASCII letter, then letters, digits or `_`, at most 32 characters). The value is
+  untrusted like a kind: a plain identifier or a whole number, else the detail is left out
+  whole. At most `MAX_DETAILS` (8) per report; a name given again replaces its value. Details
+  are written in the report's JSON line only when there are some (older lines still read) and
+  go out as the exception item's `properties`.
+
 ### Fixed
 
 - `TauriKit.Sidecar.Loopback`: the package now carries the `LICENSE` text, not only the MIT

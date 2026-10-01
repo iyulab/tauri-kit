@@ -1,5 +1,7 @@
 //! What a report holds, and the rules that pick a layer's frames out of a stack.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 /// Enough of a stack to tell one failure from another: the frames a [`Layer`] keeps by default.
@@ -8,11 +10,15 @@ pub const MAX_FRAMES: usize = 20;
 /// The kind a report gets when what it was handed is not a plain identifier.
 pub const UNRECOGNIZED_KIND: &str = "Unrecognized";
 
+/// The most details one report carries ([`Report::detail`]).
+pub const MAX_DETAILS: usize = 8;
+
 /// One error report, exactly as it is written and sent.
 ///
 /// Every field comes from an allowlist: the layer is the app's own name, the kind is a plain
-/// identifier or [`UNRECOGNIZED_KIND`], the frames are frames of the app's own code, and the rest
-/// is the app's version, the platform and the time. Serialized, it is one JSON object, and the
+/// identifier or [`UNRECOGNIZED_KIND`], the frames are frames of the app's own code, the details
+/// are plain identifiers or whole numbers under names the app gives, and the rest is the app's
+/// version, the platform and the time. Serialized, it is one JSON object, and the
 /// layer is the name the app gave it, as a string.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Report {
@@ -31,6 +37,10 @@ pub struct Report {
     pub arch: String,
     /// When it failed, in UTC to the second (ISO 8601) — reports are often sent on a later launch.
     pub time: String,
+    /// More of what failed, by a name of the app's own — a status code, the app's own error code
+    /// beside the type it came with. See [`Report::detail`].
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub details: BTreeMap<String, String>,
 }
 
 impl Report {
@@ -55,7 +65,24 @@ impl Report {
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
             time: utc(std::time::SystemTime::now()),
+            details: BTreeMap::new(),
         }
+    }
+
+    /// The report with one more detail: `name` is the app's own (an ASCII letter, then letters,
+    /// digits or `_`, at most 32 characters) and `value` is untrusted — a plain identifier as a
+    /// kind is, or a whole number. A detail that breaks either rule is left out whole, as is any
+    /// past [`MAX_DETAILS`]; nothing of it is taken in part. A name given again replaces its value.
+    pub fn detail(mut self, name: &str, value: &str) -> Self {
+        let named = name.len() <= 32
+            && name.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        let plain = plain_kind(value) != UNRECOGNIZED_KIND || is_whole_number(value);
+        let room = self.details.len() < MAX_DETAILS || self.details.contains_key(name);
+        if named && plain && room {
+            self.details.insert(name.to_string(), value.to_string());
+        }
+        self
     }
 
     /// A report of the same layer and version with only `kind`, and no frames.
@@ -68,6 +95,7 @@ impl Report {
             os: self.os.clone(),
             arch: self.arch.clone(),
             time: self.time.clone(),
+            details: BTreeMap::new(),
         }
     }
 }
@@ -410,6 +438,12 @@ fn plain_kind(raw: &str) -> String {
     }
 }
 
+/// Whether `raw` is a whole number in decimal: an optional `-`, then 1 to 18 digits.
+fn is_whole_number(raw: &str) -> bool {
+    let digits = raw.strip_prefix('-').unwrap_or(raw);
+    (1..=18).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_digit())
+}
+
 /// A function name as a stack prints it, if it is only an identifier path.
 fn function_name(raw: &str) -> Option<&str> {
     let plain = !raw.is_empty()
@@ -457,6 +491,51 @@ mod tests {
 
     fn shell() -> Layer {
         Layer::new("shell", FrameRule::rust_source())
+    }
+
+    #[test]
+    fn a_detail_is_a_plain_identifier_or_a_whole_number_under_a_plain_name() {
+        let report = Report::new(&shell(), "Engine", "", VERSION)
+            .detail("status", "500")
+            .detail("code", "engine-start")
+            .detail("offset", "-3")
+            .detail("path", "C:\\Users\\someone\\notes.md")
+            .detail("note", "the person's words")
+            .detail("2fast", "x")
+            .detail("bad name", "x")
+            .detail("big", "1234567890123456789");
+        assert_eq!(
+            report.details.into_iter().collect::<Vec<_>>(),
+            [
+                ("code".to_string(), "engine-start".to_string()),
+                ("offset".to_string(), "-3".to_string()),
+                ("status".to_string(), "500".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_report_carries_at_most_a_few_details_and_a_name_given_again_replaces_its_value() {
+        let mut report = Report::new(&shell(), "Engine", "", VERSION);
+        for i in 0..MAX_DETAILS + 3 {
+            report = report.detail(&format!("d{i}"), "x");
+        }
+        assert_eq!(report.details.len(), MAX_DETAILS);
+        let report = report.detail("d0", "y");
+        assert_eq!(report.details["d0"], "y");
+        assert_eq!(report.details.len(), MAX_DETAILS);
+    }
+
+    #[test]
+    fn details_are_left_out_of_a_line_that_has_none_and_a_line_without_them_still_reads() {
+        let report = Report::new(&shell(), "Engine", "", VERSION);
+        assert!(!serde_json::to_string(&report).unwrap().contains("details"));
+        let line = r#"{"layer":"shell","kind":"Engine","frames":[],"version":"1.2.3","os":"windows","arch":"x86_64","time":"2026-10-01T00:00:00Z"}"#;
+        let read: Report = serde_json::from_str(line).unwrap();
+        assert!(read.details.is_empty());
+        let with = report.detail("status", "409");
+        let again: Report = serde_json::from_str(&serde_json::to_string(&with).unwrap()).unwrap();
+        assert_eq!(again, with);
     }
 
     /// Strings no report may carry, whatever a layer hands over: paths of the person's files

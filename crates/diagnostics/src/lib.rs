@@ -10,6 +10,8 @@
 //!   process, a helper process) — a [`Layer`].
 //! - **kind**: a type or class name, or a code of the app's own, kept only if it is a plain
 //!   identifier — whole, or replaced by [`UNRECOGNIZED_KIND`].
+//! - **details**: facts the app names ([`Report::detail`]) — a status code, an error code of its
+//!   own — each kept only if its value is a plain identifier or a whole number.
 //! - **frames**: the lines of a stack the layer's [`FrameRule`] recognises as the app's own code,
 //!   rewritten to a file name and position or a method name; every other line is dropped whole.
 //!   Rules are provided for a web bundle the app serves ([`WebBundle`]), the app's Rust source
@@ -62,7 +64,9 @@ mod report;
 mod appinsights;
 
 pub use queue::{trim, Reporter, CAPPED_KIND, MAX_FILE_BYTES, MAX_REPORTS};
-pub use report::{FrameRule, Layer, Report, RustSource, WebBundle, MAX_FRAMES, UNRECOGNIZED_KIND};
+pub use report::{
+    FrameRule, Layer, Report, RustSource, WebBundle, MAX_DETAILS, MAX_FRAMES, UNRECOGNIZED_KIND,
+};
 
 #[cfg(feature = "appinsights")]
 pub use appinsights::Sink;

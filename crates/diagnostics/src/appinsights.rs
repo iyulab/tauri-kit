@@ -50,8 +50,9 @@ impl Sink {
     }
 
     /// A report as Application Insights takes it: one exception telemetry item, whose type and
-    /// message are both the report's kind, whose stack is the report's frames, and whose cloud
-    /// role is the report's layer. It adds nothing that is not in the report.
+    /// message are both the report's kind, whose stack is the report's frames, whose properties
+    /// are the report's details, and whose cloud role is the report's layer. It adds nothing that
+    /// is not in the report.
     pub fn envelope(&self, report: &Report) -> serde_json::Value {
         serde_json::json!({
             "name": "Microsoft.ApplicationInsights.Exception",
@@ -73,6 +74,7 @@ impl Sink {
                         "stack": report.frames.join("\n"),
                     }],
                     "severityLevel": 3,
+                    "properties": report.details,
                 },
             },
         })
@@ -226,6 +228,26 @@ mod tests {
         assert_eq!(exception["stack"], "save index-a.js:1:2");
         // Still nothing but the report: the envelope adds no field that could carry content.
         assert!(item.to_string().is_ascii());
+        assert_eq!(
+            item["data"]["baseData"]["properties"],
+            serde_json::json!({})
+        );
+    }
+
+    #[test]
+    fn a_reports_details_go_out_as_its_properties() {
+        let sink = Sink {
+            instrumentation_key: "k".into(),
+            track_url: "https://x/v2.1/track".into(),
+        };
+        let report = Report::new(&ui(), "EngineFailed", "", "1.2.3")
+            .detail("status", "500")
+            .detail("code", "engine");
+        let item = sink.envelope(&report);
+        assert_eq!(
+            item["data"]["baseData"]["properties"],
+            serde_json::json!({ "code": "engine", "status": "500" })
+        );
     }
 
     /// A loopback endpoint that answers each request with the next of `statuses`, and hands back
