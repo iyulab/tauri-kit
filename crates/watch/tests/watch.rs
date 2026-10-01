@@ -315,3 +315,72 @@ fn a_file_seen_beside_another_change_and_removed_at_once_is_reported_gone() {
     }
     eprintln!("rounds in which the stray file was reported at all: {seen_written}");
 }
+
+/// An app that hears only its own kind of file, and says so of files alone.
+fn md_only(w: Watch) -> Watch {
+    w.ignore_files(|p| p.extension().is_none_or(|e| e != "md"))
+}
+
+#[test]
+fn a_folder_moved_in_whole_reports_its_files_when_only_files_are_ignored() {
+    let h = watch(md_only);
+    // Made beside the watched folder, on the same volume, then moved in as a sync client does.
+    let outside = h.path("../outside-moved-in");
+    fs::create_dir_all(outside.join("deep")).unwrap();
+    fs::write(outside.join("a.md"), "a").unwrap();
+    fs::write(outside.join("deep").join("b.md"), "b").unwrap();
+    fs::write(outside.join("x.txt"), "x").unwrap();
+    fs::rename(&outside, h.path("moved")).unwrap();
+    let changes = h.changes_until(|c| {
+        has(c, "moved/a.md", ChangeKind::Written) && has(c, "moved/deep/b.md", ChangeKind::Written)
+    });
+    assert!(
+        has(&changes, "moved/a.md", ChangeKind::Written),
+        "{changes:?}"
+    );
+    assert!(
+        has(&changes, "moved/deep/b.md", ChangeKind::Written),
+        "{changes:?}"
+    );
+    assert!(
+        !changes
+            .iter()
+            .any(|c| c.path.extension().is_none_or(|e| e != "md")),
+        "only md files: {changes:?}"
+    );
+}
+
+#[test]
+fn a_folder_removed_whole_reports_its_files_gone_when_only_files_are_ignored() {
+    let h = watch(md_only);
+    fs::create_dir(h.path("sub")).unwrap();
+    fs::write(h.path("sub/a.md"), "a").unwrap();
+    fs::write(h.path("sub/x.txt"), "x").unwrap();
+    h.changes_until(|c| has(c, "sub/a.md", ChangeKind::Written));
+    fs::remove_dir_all(h.path("sub")).unwrap();
+    let changes = h.changes_until(|c| has(c, "sub/a.md", ChangeKind::Removed));
+    assert!(
+        has(&changes, "sub/a.md", ChangeKind::Removed),
+        "{changes:?}"
+    );
+    assert!(
+        !changes.iter().any(|c| c.path == Path::new("sub/x.txt")),
+        "{changes:?}"
+    );
+}
+
+#[test]
+fn ignoring_files_leaves_the_folders_they_are_in_watched() {
+    let h = watch(md_only);
+    fs::create_dir(h.path("notes")).unwrap();
+    fs::write(h.path("notes/x.txt"), "x").unwrap();
+    fs::write(h.path("notes/a.md"), "a").unwrap();
+    let changes = h.changes_until(|c| has(c, "notes/a.md", ChangeKind::Written));
+    assert_eq!(
+        changes,
+        vec![Change {
+            path: PathBuf::from("notes/a.md"),
+            kind: ChangeKind::Written
+        }]
+    );
+}

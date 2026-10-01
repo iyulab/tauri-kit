@@ -20,7 +20,8 @@
 //!   a change whose content is what the app last wrote there is not reported — however many
 //!   notifications or batches the write took.
 //! - **Temporary files left out**: files named the way `tauri-kit-fs` names its temporary files,
-//!   and anything the app's [`Watch::ignore`] rule matches.
+//!   anything the app's [`Watch::ignore`] rule matches, and files its [`Watch::ignore_files`] rule
+//!   matches.
 //! - **Honest about loss**: when the platform says notifications were dropped, the app gets
 //!   [`Notice::Rescan`] and should read the folder again instead of trusting what it knows. On
 //!   Windows the `notify` 8 release this crate builds on does not pass an overflow on: the batch is
@@ -100,6 +101,7 @@ pub struct Watch {
     root: PathBuf,
     debounce: Duration,
     ignore: Option<PathRule>,
+    ignore_files: Option<PathRule>,
     rescan_on: Option<PathRule>,
     own: Option<OwnWrites>,
     probe: Option<(PathBuf, Duration)>,
@@ -111,6 +113,7 @@ impl fmt::Debug for Watch {
             .field("root", &self.root)
             .field("debounce", &self.debounce)
             .field("ignore", &self.ignore.is_some())
+            .field("ignore_files", &self.ignore_files.is_some())
             .field("rescan_on", &self.rescan_on.is_some())
             .field("own_writes", &self.own.is_some())
             .field("probe", &self.probe)
@@ -125,6 +128,7 @@ impl Watch {
             root: root.into(),
             debounce: DEFAULT_DEBOUNCE,
             ignore: None,
+            ignore_files: None,
             rescan_on: None,
             own: None,
             probe: None,
@@ -139,9 +143,23 @@ impl Watch {
     }
 
     /// Paths not to report. The rule gets each path relative to the watched folder; a folder the
-    /// app keeps its own state in (`.git`, a cache) is a typical match.
+    /// app keeps its own state in (`.git`, a cache) is a typical match. A folder it matches is not
+    /// looked into: nothing below it is reported, whatever it holds.
+    ///
+    /// For a rule about files alone — an app that hears only its own kind of file — use
+    /// [`Watch::ignore_files`]: a rule like "not a `.md` file" matches every folder too, and here
+    /// would leave out the files of a folder moved in or removed whole.
     pub fn ignore(mut self, rule: impl Fn(&Path) -> bool + Send + Sync + 'static) -> Self {
         self.ignore = Some(Arc::new(rule));
+        self
+    }
+
+    /// Files not to report. The rule gets each file's path relative to the watched folder and is
+    /// never asked about a folder: every folder not left out by [`Watch::ignore`] is still looked
+    /// into, so the files it matches go unreported while the others are reported however they
+    /// arrived — one by one, or in a folder moved in or removed whole.
+    pub fn ignore_files(mut self, rule: impl Fn(&Path) -> bool + Send + Sync + 'static) -> Self {
+        self.ignore_files = Some(Arc::new(rule));
         self
     }
 
@@ -200,8 +218,11 @@ impl Watch {
         let shared = Arc::new(Shared {
             resolver: Mutex::new(Resolver::new(
                 root.clone(),
-                self.ignore,
-                self.rescan_on,
+                Rules {
+                    ignore: self.ignore,
+                    ignore_files: self.ignore_files,
+                    rescan_on: self.rescan_on,
+                },
                 self.own,
             )),
             on_notice: Mutex::new(Box::new(on_notice)),
@@ -551,11 +572,18 @@ fn changed_paths(events: &[DebouncedEvent]) -> impl Iterator<Item = &PathBuf> {
 /// batch touches are listed anew and compared with what they held, and a new folder is read whole.
 struct Resolver {
     root: PathBuf,
-    ignore: Option<PathRule>,
-    rescan_on: Option<PathRule>,
+    rules: Rules,
     own: Option<OwnWrites>,
     /// Each watched folder (absolute) and its entries when last listed: name → is a folder.
     folders: HashMap<PathBuf, HashMap<OsString, bool>>,
+}
+
+/// The app's rules about which paths it hears of.
+#[derive(Default)]
+struct Rules {
+    ignore: Option<PathRule>,
+    ignore_files: Option<PathRule>,
+    rescan_on: Option<PathRule>,
 }
 
 /// The changes of one batch, each path once, in the order first found.
@@ -574,16 +602,10 @@ impl Batch {
 }
 
 impl Resolver {
-    fn new(
-        root: PathBuf,
-        ignore: Option<PathRule>,
-        rescan_on: Option<PathRule>,
-        own: Option<OwnWrites>,
-    ) -> Self {
+    fn new(root: PathBuf, rules: Rules, own: Option<OwnWrites>) -> Self {
         let mut resolver = Self {
             root,
-            ignore,
-            rescan_on,
+            rules,
             own,
             folders: HashMap::new(),
         };
@@ -731,6 +753,9 @@ impl Resolver {
             }
             // A link is an entry of its own: the watch does not follow it.
             let is_folder = entry.file_type().is_ok_and(|t| t.is_dir());
+            if !is_folder && self.file_ignored(&entry.path()) {
+                continue;
+            }
             listed.insert(entry.file_name(), is_folder);
         }
         Some(listed)
@@ -738,7 +763,7 @@ impl Resolver {
 
     /// Whether a change at `path` is one the app asked to hear as [`Notice::Rescan`].
     fn says_rescan(&self, path: &Path) -> bool {
-        let Some(rule) = &self.rescan_on else {
+        let Some(rule) = &self.rules.rescan_on else {
             return false;
         };
         path.strip_prefix(&self.root).is_ok_and(|relative| {
@@ -753,16 +778,33 @@ impl Resolver {
         if relative.as_os_str().is_empty() || is_temporary(relative) {
             return None;
         }
-        if self.ignore.as_ref().is_some_and(|rule| rule(relative)) {
+        if self
+            .rules
+            .ignore
+            .as_ref()
+            .is_some_and(|rule| rule(relative))
+        {
             return None;
         }
         Some(relative)
+    }
+
+    /// Whether the app's [`Watch::ignore_files`] rule leaves out the file at `path`.
+    fn file_ignored(&self, path: &Path) -> bool {
+        let Some(rule) = &self.rules.ignore_files else {
+            return false;
+        };
+        path.strip_prefix(&self.root)
+            .is_ok_and(|relative| rule(relative))
     }
 
     fn written(&self, path: &Path, batch: &mut Batch) {
         let Some(relative) = self.relative_if_watched(path) else {
             return;
         };
+        if self.file_ignored(path) {
+            return;
+        }
         if self
             .own
             .as_ref()
@@ -778,7 +820,9 @@ impl Resolver {
             own.forget(path);
         }
         if let Some(relative) = self.relative_if_watched(path) {
-            batch.push(relative.to_path_buf(), ChangeKind::Removed);
+            if !self.file_ignored(path) {
+                batch.push(relative.to_path_buf(), ChangeKind::Removed);
+            }
         }
     }
 
@@ -826,7 +870,7 @@ mod tests {
     }
 
     fn resolver(root: &Path) -> Resolver {
-        Resolver::new(resolved(root).unwrap(), None, None, None)
+        Resolver::new(resolved(root).unwrap(), Rules::default(), None)
     }
 
     fn change(path: &Path, kind: ChangeKind) -> Change {
