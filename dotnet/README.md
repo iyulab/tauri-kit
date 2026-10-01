@@ -10,8 +10,10 @@ The app starts the sidecar with a fresh random token in an environment variable.
 - announces that port as a line on standard output, which the app waits for;
 - answers only requests carrying the token as `Authorization: Bearer <token>`, compared in
   constant time;
-- reports an unexpected failure as its exception type and the innermost frame in the app's own
-  code — never the message, which can quote the data the request was about.
+- reports an unexpected failure as its exception type and the frames in the app's own code it
+  passed through, innermost first (`{"fault":{"type","at","frames"}}`) — never the message, which
+  can quote the data the request was about. `Fault.Of` reads a failure away from any request the
+  same way.
 
 The variable's name and the line's prefix are the app's, and must match what the Rust side is
 given.

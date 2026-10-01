@@ -73,6 +73,9 @@ public sealed class LoopbackHostTests : IAsyncLifetime
         var fault = JsonNode.Parse(text)!["fault"]!;
         Assert.Equal("System.InvalidOperationException", (string?)fault["type"]);
         Assert.Equal("TauriKit.Sidecar.Loopback.Tests.Thrower.Throw", (string?)fault["at"]);
+        var frames = fault["frames"]!.AsArray().Select(f => (string?)f).ToList();
+        Assert.Equal("TauriKit.Sidecar.Loopback.Tests.Thrower.Throw", frames[0]);
+        Assert.All(frames, f => Assert.StartsWith("TauriKit.Sidecar.Loopback.Tests", f, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -136,6 +139,42 @@ public sealed class LoopbackHostStaticTests
         Assert.Equal("MyApp.Host.Api.Handle", Fault.OwnFrame(trace, ["MyApp.Host."]));
         Assert.Null(Fault.OwnFrame(trace, ["Other."]));
         Assert.Null(Fault.OwnFrame(null, ["MyApp."]));
+    }
+
+    [Fact]
+    public void The_own_frames_are_the_path_through_the_app_innermost_first()
+    {
+        const string trace = """
+               at System.Linq.Enumerable.First[TSource](IEnumerable`1 source)
+               at MyApp.Core.Ledger.Post(Entry entry) in C:\src\Ledger.cs:line 10
+               at MyApp.Core.Ledger.Post(Entry entry) in C:\src\Ledger.cs:line 14
+               at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+            --- End of stack trace from previous location ---
+               at MyApp.Host.Api.Handle(HttpContext context)
+               at Microsoft.AspNetCore.Routing.EndpointMiddleware.Invoke(HttpContext httpContext)
+            """;
+        Assert.Equal(["MyApp.Core.Ledger.Post", "MyApp.Host.Api.Handle"], Fault.OwnFrames(trace, ["MyApp."]));
+        Assert.Equal(["MyApp.Core.Ledger.Post"], Fault.OwnFrames(trace, ["MyApp."], maxFrames: 1));
+        Assert.Empty(Fault.OwnFrames(trace, ["MyApp."], maxFrames: 0));
+        Assert.Empty(Fault.OwnFrames(null, ["MyApp."]));
+        Assert.Throws<ArgumentOutOfRangeException>(() => Fault.OwnFrames(trace, ["MyApp."], maxFrames: -1));
+    }
+
+    [Fact]
+    public void A_fault_off_any_request_reads_the_same_way()
+    {
+        try
+        {
+            Thrower.Throw("someone private");
+        }
+        catch (InvalidOperationException e)
+        {
+            var fault = Fault.Of(e, ["TauriKit.Sidecar.Loopback.Tests"]);
+            Assert.Equal("System.InvalidOperationException", fault.Type);
+            Assert.Equal(fault.Frames[0], fault.At);
+            Assert.Contains("TauriKit.Sidecar.Loopback.Tests.LoopbackHostStaticTests.A_fault_off_any_request_reads_the_same_way", fault.Frames);
+            Assert.Null(Fault.Of(e, ["Other."]).At);
+        }
     }
 
     [Fact]

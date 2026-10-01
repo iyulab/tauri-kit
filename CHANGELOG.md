@@ -7,6 +7,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Changed
+
+- `TauriKit.Sidecar.Loopback`: a fault carries the app's own frames it passed through, innermost
+  first (`FaultView.Frames`, in the 500 body as `fault.frames`), not only the innermost one — the
+  same exception type often comes from more than one path. `At` stays the first of them.
+  `FaultOptions.MaxFrames` (default 20) caps them; `Fault.Of` takes the cap too, and
+  `Fault.OwnFrames` reads them from a rendered trace, a frame repeated right after itself once.
+  `FaultView` gained a positional parameter.
+
 ### Fixed
 
 - `tauri-kit-diagnostics`: `WebBundle` keeps frames of a bundle served as `tauri://localhost/…`, as

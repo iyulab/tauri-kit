@@ -77,8 +77,8 @@ public static class LoopbackHost
     /// <summary>
     /// Turns an exception escaping a request into an answer: the status
     /// <see cref="FaultOptions.StatusFor"/> gives it with no body, or else 500 with a
-    /// <see cref="FaultResponse"/> — the exception's type and the innermost frame in the app's own
-    /// code, never the message, which can quote the data the request was about.
+    /// <see cref="FaultResponse"/> — the exception's type and the frames in the app's own code,
+    /// never the message, which can quote the data the request was about.
     /// </summary>
     public static IApplicationBuilder UseFaults(this IApplicationBuilder app, FaultOptions options)
     {
@@ -98,7 +98,7 @@ public static class LoopbackHost
                     return;
                 }
                 context.Response.StatusCode = StatusCodes.Status500InternalServerError;
-                await context.Response.WriteAsJsonAsync(new FaultResponse(Fault.Of(e, options.OwnNamespaces)), LoopbackJson.Default.FaultResponse).ConfigureAwait(false);
+                await context.Response.WriteAsJsonAsync(new FaultResponse(Fault.Of(e, options.OwnNamespaces, options.MaxFrames)), LoopbackJson.Default.FaultResponse).ConfigureAwait(false);
             }
         });
     }
@@ -132,10 +132,13 @@ public static class LoopbackHost
 public sealed class FaultOptions
 {
     /// <summary>
-    /// Namespace prefixes of the app's own code (for example <c>"MyCompany."</c>): the innermost stack
-    /// frame in one of them is reported as where the failure happened.
+    /// Namespace prefixes of the app's own code (for example <c>"MyCompany."</c>): the stack frames in
+    /// them are reported, the innermost as where the failure happened.
     /// </summary>
     public IReadOnlyList<string> OwnNamespaces { get; init; } = [];
+
+    /// <summary>How many of the app's own frames a fault carries, innermost first.</summary>
+    public int MaxFrames { get; init; } = Fault.DefaultMaxFrames;
 
     /// <summary>
     /// The status to answer an exception the app expects with (a conflict, say), or <c>null</c> to
