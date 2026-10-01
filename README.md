@@ -18,17 +18,18 @@ More capabilities will be added as separate crates.
 
 ```toml
 [dependencies]
-tauri-kit-fs = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.5.0" }
-tauri-kit-credentials = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.5.0" }
-tauri-kit-sidecar = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.5.0" }
-tauri-kit-watch = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.5.0" }
+tauri-kit-fs = "0.6"
+tauri-kit-credentials = "0.6"
+tauri-kit-sidecar = "0.6"
+tauri-kit-watch = "0.6"
 ```
 
-Take the crates you need in one edit. Cargo re-resolves everything reachable from a git source's
-already-locked crates when another crate from the same source is added later, which can move
-unrelated entries of `Cargo.lock` — crates that accept a range of versions of a shared dependency
-(such as `windows-sys` or `getrandom`) may land on a different one. It is harmless to the build, but
-review the `Cargo.lock` diff when adding a crate from this repository to an app that already uses one.
+The crates are published to crates.io. Depending on them from this repository instead
+(`{ git = "https://github.com/iyulab/tauri-kit", tag = "v0.6.0" }`) also works, but take the crates
+you need in one edit: Cargo re-resolves everything reachable from a git source's already-locked
+crates when another crate from the same source is added later, which can move unrelated entries of
+`Cargo.lock` — crates that accept a range of versions of a shared dependency (such as `windows-sys`
+or `getrandom`) may land on a different one.
 
 ### Versioning
 
