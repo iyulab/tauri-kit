@@ -357,6 +357,10 @@ fn a_folder_removed_whole_reports_its_files_gone_when_only_files_are_ignored() {
     fs::write(h.path("sub/a.md"), "a").unwrap();
     fs::write(h.path("sub/x.txt"), "x").unwrap();
     h.changes_until(|c| has(c, "sub/a.md", ChangeKind::Written));
+    // A folder removed whole is one that has been there a while. Removed at once, macOS can hand
+    // its files over as made and removed in one go — no change at all, which is right for that.
+    std::thread::sleep(QUIET);
+    while h.notices.try_recv().is_ok() {}
     fs::remove_dir_all(h.path("sub")).unwrap();
     let changes = h.changes_until(|c| has(c, "sub/a.md", ChangeKind::Removed));
     assert!(
