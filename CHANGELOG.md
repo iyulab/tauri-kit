@@ -7,6 +7,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-01
+
 ### Fixed
 
 - `tauri-kit-watch`: a file another program made and removed again quickly could be reported as
@@ -229,6 +231,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - `tauri-kit-sidecar`: bundled helper processes without a console window, stopped together with
   everything they start, with readiness waits that notice a crash.
 
+[0.9.1]: https://github.com/iyulab/tauri-kit/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/iyulab/tauri-kit/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/iyulab/tauri-kit/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/iyulab/tauri-kit/compare/v0.6.0...v0.7.0
