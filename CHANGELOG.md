@@ -5,6 +5,16 @@ version. The format is based on [Keep a Changelog](https://keepachangelog.com/en
 project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while the version is
 `0.x`, a minor release may change the API).
 
+## [Unreleased]
+
+### Changed
+
+- `tauri-kit-fs`: `rename_new` also moves folders, with the same promise — it never replaces
+  what is at the new name. On Linux it is one `renameat2` with `RENAME_NOREPLACE` and on macOS one
+  `renamex_np` with `RENAME_EXCL`, so the check and the move are one step for files and folders
+  alike. Where the kernel or file system lacks that call, files fall back to link-then-unlink as
+  before, and folders to a check followed by a rename. The crate now depends on `libc` on Unix.
+
 ## [0.6.0] - 2026-10-01
 
 ### Added

@@ -1062,6 +1062,7 @@ dependencies = [
 name = "tauri-kit-fs"
 version = "0.6.0"
 dependencies = [
+ "libc",
  "tempfile",
  "windows-sys 0.61.2",
 ]

@@ -43,7 +43,7 @@ use std::path::Path;
 tauri_kit_fs::write_atomic(Path::new("settings.json"), br#"{"theme":"dark"}"#)?;
 // Fails with ErrorKind::AlreadyExists instead of replacing a file that is already there.
 tauri_kit_fs::write_atomic_new(Path::new("report.md"), b"# Report")?;
-// Renames only if the new name is free; the file stays the same file (a sync client sees a move).
+// Renames a file or folder only if the new name is free; a sync client sees a move.
 tauri_kit_fs::rename_new(Path::new("report.md"), Path::new("2026 report.md"))?;
 ```
 

@@ -93,18 +93,22 @@ pub fn write_atomic_new_staged(path: &Path, content: &[u8], staging: &Path) -> i
     Writer::new().staging(staging).write_new(path, content)
 }
 
-/// Moves the file at `from` to `to`, but only if nothing is at `to`.
+/// Moves the file or folder at `from` to `to`, but only if nothing is at `to`.
 ///
-/// It is a rename, not a copy: the file stays the same file — its creation time, and its history in
-/// a sync client, which sees a move rather than a new file and a deleted one. If anything exists at
-/// `to` — a file, a directory, a symbolic link — this fails with [`io::ErrorKind::AlreadyExists`] and
-/// both names are left as they were; the check and the move are one step, so two apps racing for the
-/// same name cannot both succeed. Both must be on the same volume. Transient refusals
+/// It is a rename, not a copy: the entry stays the same entry — its creation time, and its history
+/// in a sync client, which sees a move rather than a new entry and a deleted one. If anything exists
+/// at `to` — a file, a directory, a symbolic link — this fails with [`io::ErrorKind::AlreadyExists`]
+/// and both names are left as they were; the check and the move are one step, so two apps racing
+/// for the same name cannot both succeed. Both must be on the same volume. Transient refusals
 /// ([`is_transient`]) are retried for [`DEFAULT_PATIENCE`].
 ///
-/// On Windows this is one `MoveFileExW` that does not replace. Elsewhere the file is linked under the
-/// new name, which fails if the name is taken, and then unlinked from the old one: a crash between
-/// the two leaves the file under both names, never under neither.
+/// On Windows this is one `MoveFileExW` that does not replace; on Linux one `renameat2` with
+/// `RENAME_NOREPLACE`; on macOS one `renamex_np` with `RENAME_EXCL`. Where the platform or the file
+/// system has no such call, a file is linked under the new name, which fails if the name is taken,
+/// and then unlinked from the old one — a crash between the two leaves it under both names, never
+/// under neither. A folder cannot be linked, so there it is checked and then renamed: the name is
+/// still never replaced by this call, but another program that takes it in between makes the move
+/// fail or, on file systems that let a rename replace an empty folder, replace that empty folder.
 pub fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
     patiently(|| move_noclobber(from, to))?;
     sync_parent(to)?;
@@ -135,6 +139,83 @@ fn move_noclobber(from: &Path, to: &Path) -> io::Result<()> {
 
 #[cfg(not(windows))]
 fn move_noclobber(from: &Path, to: &Path) -> io::Result<()> {
+    match exclusive_rename(from, to) {
+        Err(e) if unsupported(&e) => portable_noclobber(from, to),
+        done => done,
+    }
+}
+
+/// The platform's one-step rename that refuses an occupied target, or `Unsupported` without one.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn exclusive_rename(from: &Path, to: &Path) -> io::Result<()> {
+    let (from, to) = (c_path(from)?, c_path(to)?);
+    // The raw system call rather than the libc wrapper, which older C libraries do not have.
+    // SAFETY: both are NUL-terminated strings that outlive the call; AT_FDCWD resolves them as
+    // ordinary paths.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            from.as_ptr(),
+            libc::AT_FDCWD,
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(target_vendor = "apple")]
+fn exclusive_rename(from: &Path, to: &Path) -> io::Result<()> {
+    let (from, to) = (c_path(from)?, c_path(to)?);
+    // SAFETY: both are NUL-terminated strings that outlive the call.
+    if unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "android",
+    target_vendor = "apple",
+    windows
+)))]
+fn exclusive_rename(_from: &Path, _to: &Path) -> io::Result<()> {
+    Err(io::Error::from(io::ErrorKind::Unsupported))
+}
+
+#[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+fn c_path(path: &Path) -> io::Result<std::ffi::CString> {
+    use std::os::unix::ffi::OsStrExt;
+    std::ffi::CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path contains a NUL byte"))
+}
+
+/// Whether the kernel or the file system lacks the one-step call (old kernel, network or FUSE
+/// file system), as opposed to the call refusing this move.
+#[cfg(not(windows))]
+fn unsupported(err: &io::Error) -> bool {
+    err.kind() == io::ErrorKind::Unsupported
+        || matches!(
+            err.raw_os_error(),
+            Some(libc::ENOSYS | libc::EINVAL | libc::ENOTSUP)
+        )
+}
+
+#[cfg(not(windows))]
+fn portable_noclobber(from: &Path, to: &Path) -> io::Result<()> {
+    if fs::symlink_metadata(from)?.is_dir() {
+        if occupied(to)? {
+            return Err(already_exists(to));
+        }
+        return fs::rename(from, to);
+    }
     fs::hard_link(from, to)?;
     fs::remove_file(from)
 }
@@ -605,6 +686,84 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&a).unwrap(), "mine");
         assert_eq!(fs::read_to_string(&b).unwrap(), "theirs");
+    }
+
+    #[test]
+    fn a_new_name_move_takes_a_folder_and_what_is_in_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+        fs::create_dir_all(a.join("inner")).unwrap();
+        fs::write(a.join("inner").join("note.md"), "body").unwrap();
+        rename_new(&a, &b).unwrap();
+        assert_eq!(
+            fs::read_to_string(b.join("inner").join("note.md")).unwrap(),
+            "body"
+        );
+        assert_eq!(names(dir.path()), vec!["b"]);
+    }
+
+    #[test]
+    fn a_new_name_move_of_a_folder_never_replaces_what_is_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+        fs::create_dir(&a).unwrap();
+        fs::write(a.join("mine.md"), "mine").unwrap();
+        // An empty folder is the case a plain rename replaces on Unix.
+        fs::create_dir(&b).unwrap();
+        let err = rename_new(&a, &b).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(a.join("mine.md")).unwrap(), "mine");
+        assert!(fs::read_dir(&b).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn a_new_name_move_of_a_folder_does_not_replace_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a"), dir.path().join("b.md"));
+        fs::create_dir(&a).unwrap();
+        fs::write(&b, "theirs").unwrap();
+        let err = rename_new(&a, &b).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert!(a.is_dir());
+        assert_eq!(fs::read_to_string(&b).unwrap(), "theirs");
+    }
+
+    #[test]
+    fn a_new_name_move_into_its_own_folder_moves_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a");
+        fs::create_dir(&a).unwrap();
+        assert!(rename_new(&a, &a.join("b")).is_err());
+        assert!(a.is_dir());
+        assert_eq!(names(dir.path()), vec!["a"]);
+    }
+
+    /// The path taken where the one-step call is missing must keep the same promise.
+    #[cfg(not(windows))]
+    #[test]
+    fn the_portable_move_never_replaces_what_is_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let (file, folder) = (dir.path().join("a.md"), dir.path().join("a"));
+        fs::write(&file, "mine").unwrap();
+        fs::create_dir(&folder).unwrap();
+        let (taken_file, empty_folder) = (dir.path().join("b.md"), dir.path().join("b"));
+        fs::write(&taken_file, "theirs").unwrap();
+        fs::create_dir(&empty_folder).unwrap();
+        for (from, to) in [
+            (&file, &taken_file),
+            (&folder, &empty_folder),
+            (&folder, &taken_file),
+        ] {
+            let err = portable_noclobber(from, to).unwrap_err();
+            assert_eq!(
+                err.kind(),
+                io::ErrorKind::AlreadyExists,
+                "{from:?} -> {to:?}"
+            );
+        }
+        portable_noclobber(&file, &dir.path().join("c.md")).unwrap();
+        portable_noclobber(&folder, &dir.path().join("c")).unwrap();
+        assert_eq!(names(dir.path()), vec!["b", "b.md", "c", "c.md"]);
     }
 
     #[test]
