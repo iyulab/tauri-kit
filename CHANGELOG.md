@@ -7,6 +7,24 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- `tauri-kit-fs`: `replace_if` (and `Writer::replace_if`) replaces a file crash-safely only while it
+  still holds what `Expect` says — exactly the bytes the app last read, or with
+  `Expect::HoldsOrMissing` those bytes or nothing — so a change another program made since (a sync
+  client bringing in another device's version, say) is not overwritten unseen. The content is
+  compared before the new content is written out and again right before the rename that lands it.
+  A refusal leaves the file as it is and is recognised by `is_changed`.
+- `tauri-kit-fs`: `Root` — a folder the app works inside by relative paths. `Root::resolve` refuses
+  `..` and leading `.` components, absolute paths, drive and UNC prefixes, empty paths, and paths a
+  symbolic link or junction leads outside; `Root::prepare` also creates the folders on the way and
+  checks again. Refusals are recognised by `is_outside`. The crate now depends on `dunce`.
+- `tauri-kit-fs`: `has_trash` says whether a location has a trash the person can restore a file
+  from — on Windows, network shares and removable drives have none, and recycling there deletes for
+  good.
+- `tauri-kit-fs`: `append_line` appends one line and its newline in one write, flushed to the
+  device, creating the file and its folders if needed; a line holding a line break is refused.
+
 ### Changed
 
 - `tauri-kit-fs`: `rename_new` also moves folders, with the same promise — it never replaces

@@ -26,6 +26,11 @@
 //! before giving up. [`patiently`] offers the same to the app's own file operations. Elsewhere it
 //! runs the operation once.
 //!
+//! [`replace_if`] lands a write only while the file still holds what the app last read there, so a
+//! change another program made since is not overwritten unseen. [`Root`] keeps the paths the app is
+//! handed inside the folder it works in. [`has_trash`] says whether a location has a trash to restore
+//! a file from, and [`append_line`] adds a line to a log crash-safely.
+//!
 //! Sync clients keep both sides of a conflicting change, the second under a marked name;
 //! [`conflict_copy_of`] recognises those names and says which file each is a copy of.
 //!
@@ -48,8 +53,14 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::NamedTempFile;
 
+mod append;
 mod conflict;
+mod root;
+mod trash;
+pub use append::append_line;
 pub use conflict::conflict_copy_of;
+pub use root::{is_outside, Root};
+pub use trash::has_trash;
 
 /// Prefix of every temporary file this crate creates, unless the app chooses its own with
 /// [`Writer::temp_prefix`]. [`sweep_staging`] removes only files that carry it, so a staging
@@ -91,6 +102,66 @@ pub fn write_atomic_new(path: &Path, content: &[u8]) -> io::Result<()> {
 /// [`write_atomic_staged`] does.
 pub fn write_atomic_new_staged(path: &Path, content: &[u8], staging: &Path) -> io::Result<()> {
     Writer::new().staging(staging).write_new(path, content)
+}
+
+/// What a file must hold for [`replace_if`] to replace it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Expect<'a> {
+    /// Exactly these bytes. A file that is gone has changed.
+    Holds(&'a [u8]),
+    /// Exactly these bytes, or nothing at all: a file that is gone is written again, which loses
+    /// nothing.
+    HoldsOrMissing(&'a [u8]),
+}
+
+impl Expect<'_> {
+    fn check(self, path: &Path) -> io::Result<()> {
+        let (expected, missing_is_fine) = match self {
+            Expect::Holds(bytes) => (bytes, false),
+            Expect::HoldsOrMissing(bytes) => (bytes, true),
+        };
+        match fs::read(path) {
+            Ok(current) if current == expected => Ok(()),
+            Ok(_) => Err(changed(path)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound && missing_is_fine => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Err(changed(path)),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+/// Replaces `path` with `content`, crash-safe like [`write_atomic`], but only while it still holds
+/// what `expect` says — typically what the app last read there — so an edit another program made
+/// since (a sync client bringing in another device's version, say) is not overwritten unseen.
+///
+/// When the file holds something else, this fails with an error [`is_changed`] recognises, leaves
+/// the file as it is and removes its own temporary file. The content is compared byte for byte
+/// twice: before the new content is written out, and again right before the rename that lands it,
+/// so the window in which another program's change can still be replaced is that one rename. It is
+/// a compare-and-replace, not a lock: two programs that both write without such a check can still
+/// race.
+pub fn replace_if(path: &Path, expect: Expect<'_>, content: &[u8]) -> io::Result<()> {
+    Writer::new().replace_if(path, expect, content)
+}
+
+/// Whether [`replace_if`] refused because the file no longer holds what was expected.
+pub fn is_changed(err: &io::Error) -> bool {
+    err.get_ref().is_some_and(|inner| inner.is::<Changed>())
+}
+
+#[derive(Debug)]
+struct Changed(PathBuf);
+
+impl fmt::Display for Changed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} changed since it was read", self.0.display())
+    }
+}
+
+impl std::error::Error for Changed {}
+
+fn changed(path: &Path) -> io::Error {
+    io::Error::other(Changed(path.to_path_buf()))
 }
 
 /// Moves the file or folder at `from` to `to`, but only if nothing is at `to`.
@@ -370,9 +441,10 @@ impl fmt::Debug for Writer {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Landing {
+enum Landing<'a> {
     Replace,
     CreateOnly,
+    ReplaceIf(Expect<'a>),
 }
 
 impl Writer {
@@ -421,7 +493,12 @@ impl Writer {
         self.land(path, content, Landing::CreateOnly)
     }
 
-    fn land(&self, path: &Path, content: &[u8], landing: Landing) -> io::Result<()> {
+    /// Replaces `path` with `content` only while it holds what `expect` says; see [`replace_if`].
+    pub fn replace_if(&self, path: &Path, expect: Expect<'_>, content: &[u8]) -> io::Result<()> {
+        self.land(path, content, Landing::ReplaceIf(expect))
+    }
+
+    fn land(&self, path: &Path, content: &[u8], landing: Landing<'_>) -> io::Result<()> {
         check_prefix(&self.prefix)?;
         let temp_dir = match &self.staging {
             Some(staging) => {
@@ -440,6 +517,9 @@ impl Writer {
         // Not the guarantee — the landing below is — but it spares writing content that cannot land.
         if landing == Landing::CreateOnly && occupied(path)? {
             return Err(already_exists(path));
+        }
+        if let Landing::ReplaceIf(expect) = landing {
+            patiently_for(self.patience, || expect.check(path))?;
         }
 
         let tmp = patiently_for(self.patience, || {
@@ -466,6 +546,16 @@ impl Writer {
             let landed = match landing {
                 Landing::Replace => tmp.persist(path),
                 Landing::CreateOnly => tmp.persist_noclobber(path),
+                // Checked again right before the rename, so what lies between the check and the
+                // landing is one rename — not the writing and flushing of the new content.
+                Landing::ReplaceIf(expect) => match expect.check(path) {
+                    Ok(()) => tmp.persist(path),
+                    Err(e) => {
+                        // Kept for a retry; if none follows, dropping it removes it.
+                        pending = Some(tmp);
+                        return Err(e);
+                    }
+                },
             };
             landed.map(drop).map_err(|e| {
                 pending = Some(e.file);
@@ -1047,6 +1137,50 @@ mod tests {
         assert_eq!(names(dir.path()), vec!["a.txt"], "the temp file is gone");
     }
 
+    #[test]
+    fn replace_if_replaces_what_still_holds_the_expected_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("a.txt");
+        fs::write(&f, "read").unwrap();
+        replace_if(&f, Expect::Holds(b"read"), b"mine").unwrap();
+        assert_eq!(fs::read_to_string(&f).unwrap(), "mine");
+        replace_if(&f, Expect::HoldsOrMissing(b"mine"), b"mine again").unwrap();
+        assert_eq!(fs::read_to_string(&f).unwrap(), "mine again");
+    }
+
+    #[test]
+    fn replace_if_leaves_a_file_changed_since() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("a.txt");
+        fs::write(&f, "theirs").unwrap();
+        for expect in [Expect::Holds(b"read"), Expect::HoldsOrMissing(b"read")] {
+            let err = replace_if(&f, expect, b"mine").unwrap_err();
+            assert!(is_changed(&err), "{err}");
+        }
+        assert_eq!(fs::read_to_string(&f).unwrap(), "theirs");
+        assert_eq!(names(dir.path()), vec!["a.txt"], "no temp file is left");
+    }
+
+    #[test]
+    fn replace_if_writes_a_missing_file_again_only_when_told_to() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("a.txt");
+        let err = replace_if(&f, Expect::Holds(b"read"), b"mine").unwrap_err();
+        assert!(is_changed(&err));
+        assert!(!f.exists());
+        replace_if(&f, Expect::HoldsOrMissing(b"read"), b"mine").unwrap();
+        assert_eq!(fs::read_to_string(&f).unwrap(), "mine");
+    }
+
+    #[test]
+    fn other_errors_are_not_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        // A folder where the file should be.
+        let err = replace_if(dir.path(), Expect::Holds(b""), b"x").unwrap_err();
+        assert!(!is_changed(&err));
+        assert!(!is_changed(&already_exists(dir.path())));
+    }
+
     #[cfg(feature = "test-hooks")]
     mod hooks {
         use super::*;
@@ -1151,6 +1285,30 @@ mod tests {
             assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
             assert_eq!(fs::read_to_string(&f).unwrap(), "raced");
             assert!(names(&staging).is_empty());
+        }
+
+        #[test]
+        fn replace_if_checks_again_right_before_landing() {
+            // The file holds what was read when the write starts, and something else by the time
+            // the new content is on the device: the landing is refused, not the early check.
+            let root = tempfile::tempdir().unwrap();
+            let staging = root.path().join("staging");
+            let f = root.path().join("a.txt");
+            fs::write(&f, "read").unwrap();
+            let target = f.clone();
+            let err = Writer::new()
+                .staging(&staging)
+                .observe_steps(move |step, _| {
+                    if step == Step::Synced {
+                        fs::write(&target, "synced in meanwhile")?;
+                    }
+                    Ok(())
+                })
+                .replace_if(&f, Expect::Holds(b"read"), b"mine")
+                .unwrap_err();
+            assert!(is_changed(&err), "{err}");
+            assert_eq!(fs::read_to_string(&f).unwrap(), "synced in meanwhile");
+            assert!(names(&staging).is_empty(), "the temp file is gone");
         }
     }
 }
