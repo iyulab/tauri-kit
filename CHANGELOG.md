@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Fixed
+
+- Every crate ships the license text (`LICENSE`) in its package. The license sat at the workspace root
+  only, so the published crates carried their license as a name in `Cargo.toml` without its text.
+
 ### Added
 
 - `SCOPE.md`: what the crates own (runtime platform behaviour that ships inside an app), what they
