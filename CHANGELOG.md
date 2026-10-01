@@ -9,6 +9,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ### Added
 
+- `tauri-kit-sidecar` (`loopback`): `Client::within(timeout)` — the same client, giving up on each
+  request after `timeout` instead of `LoopbackOptions::request_timeout` (a quick health check, a long
+  streamed answer). `Client::post(path)` posts with no body. `Client::post_json_stream(path, json)`
+  reads the answer as it arrives: a `Stream` with the status, read line by line through `BufRead`
+  (server-sent events). `LoopbackOptions::stdout` keeps the sidecar's stdout in a file, the
+  readiness line included.
 - `tauri-kit-diagnostics`: an `appinsights-rustls` feature — the same `Sink`, with rustls doing the
   TLS handshake against the OS's certificate store (rustls-platform-verifier) and the system proxy
   as before. `appinsights` hands TLS to the OS's own stack, which is OpenSSL on Linux, so its lock
@@ -32,6 +38,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   file that cannot be read to `<rel>.unreadable-<secs>` without replacing anything. `Outbox` keeps
   writes the app could not make yet as files (`<when>-<n>.<extension>`, oldest first) until it
   forgets them; a file that cannot be read is left in place.
+
+### Changed
+
+- `tauri-kit-sidecar`: `Output::Lines` has a `stdout` file as well as a `stderr` one — every stdout
+  line is appended to it, the ones `Sidecar::wait_line` takes included; before, stdout after the
+  accepted line was drained and dropped. Breaking for code that builds the variant: write
+  `Output::Lines { stdout: None, stderr }` to keep the old behavior.
 
 ## [0.10.0] - 2026-10-01
 

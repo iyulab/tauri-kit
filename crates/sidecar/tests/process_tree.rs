@@ -273,7 +273,14 @@ fn a_readiness_line_is_returned_as_soon_as_it_is_printed() {
     } else {
         "echo noise; echo '{\"port\":51233}'; sleep 30"
     };
-    let mut sidecar = Sidecar::spawn(shell(line), Output::Lines { stderr: None }).unwrap();
+    let mut sidecar = Sidecar::spawn(
+        shell(line),
+        Output::Lines {
+            stdout: None,
+            stderr: None,
+        },
+    )
+    .unwrap();
     let readiness = sidecar
         .wait_line(Duration::from_secs(20), |l| l.starts_with('{'))
         .unwrap();
@@ -290,7 +297,10 @@ fn a_crash_before_the_readiness_line_is_reported_at_once() {
     let started = Instant::now();
     let mut sidecar = Sidecar::spawn(
         shell("echo starting& exit 4"),
-        Output::Lines { stderr: None },
+        Output::Lines {
+            stdout: None,
+            stderr: None,
+        },
     )
     .unwrap();
     let readiness = sidecar
@@ -305,7 +315,14 @@ fn a_crash_before_the_readiness_line_is_reported_at_once() {
 
 #[test]
 fn waiting_for_a_line_stops_at_the_deadline() {
-    let mut sidecar = Sidecar::spawn(long_running(), Output::Lines { stderr: None }).unwrap();
+    let mut sidecar = Sidecar::spawn(
+        long_running(),
+        Output::Lines {
+            stdout: None,
+            stderr: None,
+        },
+    )
+    .unwrap();
     let readiness = sidecar
         .wait_line(Duration::from_millis(300), |_| true)
         .unwrap();
@@ -321,7 +338,14 @@ fn output_after_the_readiness_line_keeps_being_drained() {
     } else {
         "echo ready; i=0; while [ $i -lt 20000 ]; do echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; i=$((i+1)); done"
     };
-    let mut sidecar = Sidecar::spawn(shell(line), Output::Lines { stderr: None }).unwrap();
+    let mut sidecar = Sidecar::spawn(
+        shell(line),
+        Output::Lines {
+            stdout: None,
+            stderr: None,
+        },
+    )
+    .unwrap();
     let readiness = sidecar
         .wait_line(Duration::from_secs(20), |l| l == "ready")
         .unwrap();

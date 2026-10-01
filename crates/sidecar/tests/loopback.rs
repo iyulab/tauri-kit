@@ -55,6 +55,18 @@ fn serve() {
         let mut body = vec![0; length];
         std::io::Read::read_exact(&mut reader, &mut body).unwrap();
         let path = request.split_whitespace().nth(1).unwrap_or("");
+        if authorized && path == "/slow" {
+            std::thread::sleep(Duration::from_secs(3));
+        }
+        if authorized && path == "/stream" {
+            // No length: the body is whatever arrives until the connection closes.
+            write!(stream, "HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n").unwrap();
+            for n in 1..=3 {
+                write!(stream, "data: {n}\n\n").unwrap();
+                stream.flush().unwrap();
+            }
+            continue;
+        }
         let (status, text) = if authorized {
             (
                 "200 OK",
@@ -100,6 +112,52 @@ fn requests_carry_the_token_and_statuses_come_back_as_answers() {
     let posted = helper.client().post_json("/items", r#"{"a":1}"#).unwrap();
     assert_eq!(posted.body, r#"/items {"a":1}"#);
     assert!(posted.is_success());
+}
+
+#[test]
+fn an_empty_post_carries_the_token_too() {
+    let helper = Loopback::start(helper("serve"), &options()).unwrap();
+    let posted = helper.client().post("/shutdown").unwrap();
+    assert_eq!((posted.status, posted.body.as_str()), (200, "/shutdown "));
+}
+
+#[test]
+fn a_streamed_answer_is_read_as_it_arrives() {
+    let helper = Loopback::start(helper("serve"), &options()).unwrap();
+    let stream = helper.client().post_json_stream("/stream", "{}").unwrap();
+    assert!(stream.is_success());
+    let events: Vec<String> = stream
+        .lines()
+        .map(Result::unwrap)
+        .filter(|l| !l.is_empty())
+        .collect();
+    assert_eq!(events, ["data: 1", "data: 2", "data: 3"]);
+}
+
+#[test]
+fn a_client_within_a_shorter_time_gives_up_on_a_slow_answer() {
+    let helper = Loopback::start(helper("serve"), &options()).unwrap();
+    let started = std::time::Instant::now();
+    assert!(helper
+        .client()
+        .within(Duration::from_millis(500))
+        .get("/slow")
+        .is_err());
+    assert!(started.elapsed() < Duration::from_secs(2));
+}
+
+#[test]
+fn stdout_is_kept_in_a_file_from_the_readiness_line_on() {
+    let dir = std::env::temp_dir().join(format!("loopback-stdout-{}", std::process::id()));
+    let log = dir.join("out.log");
+    let mut options = options();
+    options.stdout = Some(log.clone());
+    let helper = Loopback::start(helper("serve"), &options).unwrap();
+    let _ = helper.client().get("/items");
+    drop(helper);
+    let kept = std::fs::read_to_string(&log).unwrap();
+    assert!(kept.contains(PREFIX), "{kept}");
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]

@@ -42,7 +42,7 @@ pub mod loopback;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, TcpListener};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
@@ -87,9 +87,13 @@ pub enum Output {
     /// a log that cannot be written never stops the sidecar.
     Files { stdout: PathBuf, stderr: PathBuf },
     /// stdout is read line by line for [`Sidecar::wait_line`], and drained on a background thread
-    /// for as long as the sidecar runs, so the child never blocks on a full pipe. stderr is appended
-    /// to a file, as with [`Output::Files`] (parent directories included), or discarded.
-    Lines { stderr: Option<PathBuf> },
+    /// for as long as the sidecar runs, so the child never blocks on a full pipe. Each stream is
+    /// also appended to a file, as with [`Output::Files`] (parent directories included), or not
+    /// kept: `stdout` gets every line, the ones `wait_line` takes included.
+    Lines {
+        stdout: Option<PathBuf>,
+        stderr: Option<PathBuf>,
+    },
 }
 
 /// How waiting for a readiness line ended.
@@ -144,7 +148,7 @@ impl Sidecar {
             Output::Files { .. } => {
                 cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
             }
-            Output::Lines { stderr } => {
+            Output::Lines { stderr, .. } => {
                 cmd.stdout(Stdio::piped());
                 cmd.stderr(if stderr.is_some() {
                     Stdio::piped()
@@ -174,9 +178,9 @@ impl Sidecar {
                     drain(err, stderr);
                 }
             }
-            Output::Lines { stderr } => {
+            Output::Lines { stdout, stderr } => {
                 if let Some(out) = child.stdout.take() {
-                    lines = Some(read_lines(out));
+                    lines = Some(read_lines(out, stdout));
                 }
                 if let (Some(err), Some(path)) = (child.stderr.take(), stderr) {
                     drain(err, path);
@@ -309,12 +313,17 @@ impl Drop for Sidecar {
     }
 }
 
+/// The file a stream is appended to, its folder created first. `None` when it cannot be opened.
+fn append_to(path: &Path) -> Option<File> {
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    File::options().create(true).append(true).open(path).ok()
+}
+
 fn drain(stream: impl Read + Send + 'static, path: PathBuf) {
     thread::spawn(move || {
-        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let Ok(mut file) = File::options().create(true).append(true).open(&path) else {
+        let Some(mut file) = append_to(&path) else {
             // Nowhere to write: keep reading so the child never blocks on a full pipe.
             let _ = io::copy(&mut BufReader::new(stream), &mut io::sink());
             return;
@@ -328,16 +337,20 @@ fn drain(stream: impl Read + Send + 'static, path: PathBuf) {
     });
 }
 
-fn read_lines(stream: impl Read + Send + 'static) -> Lines {
+fn read_lines(stream: impl Read + Send + 'static, log: Option<PathBuf>) -> Lines {
     let (sender, receiver) = mpsc::channel();
     let listening = Arc::new(AtomicBool::new(true));
     let still = Arc::clone(&listening);
     thread::spawn(move || {
+        let mut file = log.as_deref().and_then(append_to);
         let mut reader = BufReader::new(stream);
         let mut line = Vec::new();
         while matches!(reader.read_until(b'\n', &mut line), Ok(n) if n > 0) {
+            let text = String::from_utf8_lossy(&line);
+            if let Some(file) = file.as_mut() {
+                let _ = file.write_all(text.as_bytes());
+            }
             if still.load(Ordering::Relaxed) {
-                let text = String::from_utf8_lossy(&line);
                 // A dropped receiver only means nobody waits any more; keep draining.
                 let _ = sender.send(text.trim_end_matches(['\r', '\n']).to_owned());
             }

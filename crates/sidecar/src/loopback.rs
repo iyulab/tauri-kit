@@ -76,6 +76,9 @@ pub struct LoopbackOptions {
     pub request_timeout: Duration,
     /// The most bytes of a response body read. Default 256 MiB.
     pub body_limit: u64,
+    /// Where the sidecar's stdout is appended — every line, the readiness line included — if
+    /// anywhere.
+    pub stdout: Option<std::path::PathBuf>,
     /// Where the sidecar's stderr is appended, if anywhere.
     pub stderr: Option<std::path::PathBuf>,
 }
@@ -90,6 +93,7 @@ impl LoopbackOptions {
             ready_timeout: Duration::from_secs(30),
             request_timeout: Duration::from_secs(120),
             body_limit: 256 * 1024 * 1024,
+            stdout: None,
             stderr: None,
         }
     }
@@ -143,6 +147,7 @@ impl Loopback {
         let mut sidecar = Sidecar::spawn(
             cmd,
             Output::Lines {
+                stdout: options.stdout.clone(),
                 stderr: options.stderr.clone(),
             },
         )
@@ -243,6 +248,44 @@ impl fmt::Display for TransportError {
 
 impl std::error::Error for TransportError {}
 
+/// An answer read as it arrives — a streamed body such as server-sent events. Read it line by line
+/// through [`BufRead`](std::io::BufRead); the body ends when the sidecar closes it.
+pub struct Stream {
+    /// The answer's status. A status outside 2xx streams its body like any other.
+    pub status: u16,
+    body: std::io::BufReader<ureq::BodyReader<'static>>,
+}
+
+impl Stream {
+    /// Whether the status is 2xx.
+    pub fn is_success(&self) -> bool {
+        (200..300).contains(&self.status)
+    }
+}
+
+impl fmt::Debug for Stream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Stream")
+            .field("status", &self.status)
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::io::Read for Stream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.body.read(buf)
+    }
+}
+
+impl std::io::BufRead for Stream {
+    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+        self.body.fill_buf()
+    }
+    fn consume(&mut self, amount: usize) {
+        self.body.consume(amount)
+    }
+}
+
 /// Talks HTTP to a sidecar on 127.0.0.1: every request carries the token, no proxy is ever used
 /// (a system proxy would otherwise see loopback traffic and the token), and a non-2xx status comes
 /// back as a [`Response`] rather than an error.
@@ -252,6 +295,7 @@ pub struct Client {
     base: String,
     authorization: String,
     body_limit: u64,
+    timeout: Option<Duration>,
 }
 
 impl fmt::Debug for Client {
@@ -276,6 +320,16 @@ impl Client {
             base: format!("http://127.0.0.1:{port}"),
             authorization: token.bearer(),
             body_limit: options.body_limit,
+            timeout: None,
+        }
+    }
+
+    /// The same client, giving up on each request after `timeout` instead of
+    /// [`LoopbackOptions::request_timeout`] — a quick health check, or a long streamed answer.
+    pub fn within(&self, timeout: Duration) -> Client {
+        Client {
+            timeout: Some(timeout),
+            ..self.clone()
         }
     }
 
@@ -286,23 +340,54 @@ impl Client {
 
     /// GET `path` (starting with `/`).
     pub fn get(&self, path: &str) -> Result<Response, TransportError> {
-        let response = self
-            .agent
-            .get(format!("{}{path}", self.base))
-            .header("Authorization", &self.authorization)
-            .call();
+        let response = self.prepare(self.agent.get(self.url(path))).call();
+        self.read(response)
+    }
+
+    /// POST to `path` (starting with `/`) with no body.
+    pub fn post(&self, path: &str) -> Result<Response, TransportError> {
+        let response = self.prepare(self.agent.post(self.url(path))).send_empty();
         self.read(response)
     }
 
     /// POST `json` to `path` (starting with `/`), as `application/json`.
     pub fn post_json(&self, path: &str, json: &str) -> Result<Response, TransportError> {
         let response = self
-            .agent
-            .post(format!("{}{path}", self.base))
-            .header("Authorization", &self.authorization)
+            .prepare(self.agent.post(self.url(path)))
             .content_type("application/json")
             .send(json);
         self.read(response)
+    }
+
+    /// POST `json` to `path` (starting with `/`) and read the answer as it arrives.
+    pub fn post_json_stream(&self, path: &str, json: &str) -> Result<Stream, TransportError> {
+        let response = self
+            .prepare(self.agent.post(self.url(path)))
+            .content_type("application/json")
+            .send(json)
+            .map_err(|e| TransportError(e.to_string()))?;
+        let status = response.status().as_u16();
+        let body = response
+            .into_body()
+            .into_with_config()
+            .limit(self.body_limit)
+            .reader();
+        Ok(Stream {
+            status,
+            body: std::io::BufReader::new(body),
+        })
+    }
+
+    fn url(&self, path: &str) -> String {
+        format!("{}{path}", self.base)
+    }
+
+    fn prepare<B>(&self, request: ureq::RequestBuilder<B>) -> ureq::RequestBuilder<B> {
+        let request = request.header("Authorization", &self.authorization);
+        match self.timeout {
+            Some(timeout) => request.config().timeout_global(Some(timeout)).build(),
+            None => request,
+        }
     }
 
     fn read(
