@@ -23,6 +23,8 @@ the failures are quiet, platform-specific, and found late:
 - **Helper processes** — no console window, no orphans, a readiness wait that notices a crash
 - **Secrets** — the operating system's credential store, with test and development builds kept off
   the installed app's entries
+- **Error reports** — what failed and where in the app's own code, never what it was about, kept
+  where the person can read it before anything is sent
 
 One capability per crate, so an app takes only what it needs. All crates share one version.
 

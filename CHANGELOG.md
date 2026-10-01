@@ -5,6 +5,14 @@ version. The format is based on [Keep a Changelog](https://keepachangelog.com/en
 project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while the version is
 `0.x`, a minor release may change the API).
 
+## [Unreleased]
+
+### Added
+
+- `SCOPE.md`: what the crates own (runtime platform behaviour that ships inside an app), what they
+  deliberately leave to callers (tools, caller constants and wording, domain meaning, interface
+  components), and the questions that decide which side a proposed capability falls on.
+
 ## [0.7.0] - 2026-10-01
 
 ### Added
@@ -34,12 +42,6 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   moving the sent offset back with them. With the `appinsights` feature, `Sink` parses an
   Application Insights connection string and `Sink::send_pending` sends what the file gained since
   the last send in batches, stopping on 408, 429 and 5xx answers so those reports go out later.
-
-### Added
-
-- `SCOPE.md`: what the crates own (runtime platform behaviour that ships inside an app), what they
-  deliberately leave to callers (tools, caller constants and wording, domain meaning, interface
-  components), and the questions that decide which side a proposed capability falls on.
 
 ### Changed
 
