@@ -1,4 +1,5 @@
-//! Sending queued reports to Azure Application Insights (the `appinsights` feature).
+//! Sending queued reports to Azure Application Insights (the `appinsights` and
+//! `appinsights-rustls` features).
 
 use std::io;
 use std::path::Path;
@@ -80,13 +81,18 @@ impl Sink {
         })
     }
 
-    /// An agent for the ingestion endpoint: the OS's TLS and certificate store, and the proxy the
-    /// PC is set up with — an office network that inspects TLS has its own root in that store.
+    /// An agent for the ingestion endpoint: the OS's certificate store and the proxy the PC is set
+    /// up with — an office network that inspects TLS has its own root in that store. The handshake
+    /// is the OS's own TLS with the `appinsights` feature, rustls with `appinsights-rustls` alone.
     /// HTTP error statuses are answers, not errors, and a request gives up after 30 seconds.
     pub fn agent() -> ureq::Agent {
         use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
+        #[cfg(feature = "appinsights")]
+        let provider = TlsProvider::NativeTls;
+        #[cfg(not(feature = "appinsights"))]
+        let provider = TlsProvider::Rustls;
         let tls = TlsConfig::builder()
-            .provider(TlsProvider::NativeTls)
+            .provider(provider)
             .root_certs(RootCerts::PlatformVerifier)
             .build();
         ureq::Agent::config_builder()

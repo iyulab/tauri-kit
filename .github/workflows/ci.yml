@@ -45,6 +45,8 @@ jobs:
         run: |
           cargo clippy --workspace --all-targets -- -D warnings
           cargo clippy --workspace --all-targets --all-features -- -D warnings
+          # --all-features picks native TLS for the diagnostics sink; the rustls choice alone is its own build.
+          cargo clippy -p tauri-kit-diagnostics --all-targets --no-default-features --features appinsights-rustls -- -D warnings
 
       - name: Test
         run: cargo test --workspace --all-features

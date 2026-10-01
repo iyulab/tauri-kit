@@ -9,6 +9,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ### Added
 
+- `tauri-kit-diagnostics`: an `appinsights-rustls` feature — the same `Sink`, with rustls doing the
+  TLS handshake against the OS's certificate store (rustls-platform-verifier) and the system proxy
+  as before. `appinsights` hands TLS to the OS's own stack, which is OpenSSL on Linux, so its lock
+  file lists `openssl-sys` whatever the target; an app that keeps OpenSSL out of its dependency graph
+  can now send reports. With both features on, `appinsights` decides.
 - `tauri-kit-fs`: `free_path(dir, name, kind)` finds the first free name in a folder — `notes.md`,
   then `notes (1).md`, `notes (2).md`, … — numbering a file before its last extension and a folder
   at the end (`NameKind`). `claim_free_path(dir, name, kind, create)` creates something under it

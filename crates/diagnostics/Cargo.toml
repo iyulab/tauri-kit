@@ -13,10 +13,9 @@ categories = ["development-tools::debugging"]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-kit-fs = { path = "../fs", version = "0.10.0" }
-# HTTPS through the OS's TLS and certificate store, and the proxy the PC is set up with. The
-# `native-tls-no-default` feature alone does not compile the native-tls transport in ureq 3.4, so
-# the full feature is needed.
-ureq = { version = "3", default-features = false, features = ["native-tls", "win-system-proxy"], optional = true }
+# HTTPS with the OS's certificate store and the proxy the PC is set up with. Which TLS stack does
+# the handshake is the feature's choice (below).
+ureq = { version = "3", default-features = false, features = ["win-system-proxy"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"
@@ -24,7 +23,15 @@ tempfile = "3"
 [features]
 # `Sink`: send queued reports to an Application Insights resource. Off by default, so an app that
 # only keeps reports on disk takes no HTTP client.
-appinsights = ["dep:ureq"]
+#
+# `appinsights` hands TLS to the OS (SChannel on Windows, Security.framework on macOS). On other
+# targets native-tls is OpenSSL, so the lock file then lists `openssl-sys`. The `native-tls-no-default`
+# feature alone does not compile the native-tls transport in ureq 3.4, so the full feature is needed.
+appinsights = ["dep:ureq", "ureq/native-tls"]
+# `appinsights-rustls`: the same `Sink` over rustls, checking certificates against the OS's store
+# (rustls-platform-verifier) — for an app that keeps OpenSSL out of its dependency graph. When both
+# are on, `appinsights` decides.
+appinsights-rustls = ["dep:ureq", "ureq/rustls", "ureq/platform-verifier"]
 
 [package.metadata.docs.rs]
 all-features = true

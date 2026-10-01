@@ -56,11 +56,15 @@
 //!   over HTTPS with [`ureq`](https://docs.rs/ureq) — the OS's TLS and certificate store, and the
 //!   system proxy on Windows. Without it the crate makes no network requests and has no HTTP
 //!   dependency.
+//! - `appinsights-rustls` (off by default): the same `Sink`, with rustls doing the handshake
+//!   against the OS's certificate store — for an app that keeps OpenSSL out of its dependency
+//!   graph (native TLS is OpenSSL on Linux, so `appinsights` puts `openssl-sys` in the lock file).
+//!   With both on, `appinsights` decides.
 
 mod queue;
 mod report;
 
-#[cfg(feature = "appinsights")]
+#[cfg(any(feature = "appinsights", feature = "appinsights-rustls"))]
 mod appinsights;
 
 pub use queue::{trim, Reporter, CAPPED_KIND, MAX_FILE_BYTES, MAX_REPORTS};
@@ -68,9 +72,9 @@ pub use report::{
     FrameRule, Layer, Report, RustSource, WebBundle, MAX_DETAILS, MAX_FRAMES, UNRECOGNIZED_KIND,
 };
 
-#[cfg(feature = "appinsights")]
+#[cfg(any(feature = "appinsights", feature = "appinsights-rustls"))]
 pub use appinsights::Sink;
 
 /// The HTTP client [`Sink`] sends with, so an app can build its own agent with the same version.
-#[cfg(feature = "appinsights")]
+#[cfg(any(feature = "appinsights", feature = "appinsights-rustls"))]
 pub use ureq;
