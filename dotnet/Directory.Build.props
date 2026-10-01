@@ -1,0 +1,19 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <!-- The package shares the crates' version: the Rust and .NET halves of one arrangement are
+         released together. A test checks this against the workspace Cargo.toml. -->
+    <Version>0.7.0</Version>
+    <Authors>iyulab</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/iyulab/tauri-kit</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/iyulab/tauri-kit</RepositoryUrl>
+  </PropertyGroup>
+</Project>

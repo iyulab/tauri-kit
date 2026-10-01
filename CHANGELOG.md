@@ -17,6 +17,21 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - `SCOPE.md`: what the crates own (runtime platform behaviour that ships inside an app), what they
   deliberately leave to callers (tools, caller constants and wording, domain meaning, interface
   components), and the questions that decide which side a proposed capability falls on.
+- `tauri-kit-sidecar`, new `loopback` feature (off by default — it brings an HTTP client): the
+  arrangement for a sidecar that serves HTTP on 127.0.0.1. `Loopback::start(cmd, &options)` makes
+  a fresh `Token` (32 random bytes, never shown by `Debug`), hands it over in the environment
+  variable the app names, waits for the readiness line that starts with the app's prefix and reads
+  the port from it, and answers a `Client` for that port. Every request carries the token as a
+  bearer credential and never goes through a proxy; a status outside 2xx comes back as a
+  `Response` to read, not an error. A sidecar that exits before announcing, a line without a port,
+  and no line in time are each their own `StartError`.
+- `dotnet/`: the .NET host side, NuGet package `TauriKit.Sidecar.Loopback` under the crates'
+  version. `LoopbackHost.ReadToken`, `CreateSlimBuilder` (127.0.0.1 only, port picked by the
+  system, no logging providers), `UseBearerToken` (constant-time comparison, 401 otherwise),
+  `UseFaults` (an expected exception gets the status the app gives it; anything else a 500 with the
+  exception type and the innermost frame in the app's own namespaces — never the message), and
+  `RunAnnouncingAsync` (writes the readiness line once listening). Compatible with ahead-of-time
+  compilation. CI tests it on Linux.
 
 ## [0.7.0] - 2026-10-01
 

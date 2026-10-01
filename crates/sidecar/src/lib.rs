@@ -36,6 +36,9 @@
 //! # }
 //! ```
 
+#[cfg(feature = "loopback")]
+pub mod loopback;
+
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, TcpListener};

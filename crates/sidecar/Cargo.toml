@@ -9,6 +9,15 @@ rust-version.workspace = true
 keywords = ["tauri", "sidecar", "process", "job-object", "desktop"]
 categories = ["os"]
 
+[features]
+# A sidecar that serves HTTP on 127.0.0.1 with a per-run token: the token, the readiness line that
+# announces the port, and a client. Off by default — it brings an HTTP client along.
+loopback = ["dep:getrandom", "dep:ureq"]
+
+[dependencies]
+getrandom = { version = "0.3", optional = true }
+ureq = { version = "3", default-features = false, optional = true }
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",

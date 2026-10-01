@@ -20,7 +20,8 @@ the failures are quiet, platform-specific, and found late:
   scanners and sync clients, the conflict copies sync clients leave
 - **Folders changing underneath** — changes made by other programs, reported once and without the
   app's own writes
-- **Helper processes** — no console window, no orphans, a readiness wait that notices a crash
+- **Helper processes** — no console window, no orphans, a readiness wait that notices a crash, and
+  the loopback arrangement an HTTP helper needs (with its .NET host side in `dotnet/`)
 - **Secrets** — the operating system's credential store, with test and development builds kept off
   the installed app's entries
 - **Error reports** — what failed and where in the app's own code, never what it was about, kept

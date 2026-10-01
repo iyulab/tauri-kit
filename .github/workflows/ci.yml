@@ -64,3 +64,19 @@ jobs:
 
       - name: Check with the declared minimum
         run: cargo check --workspace --all-targets --all-features
+
+  # The .NET host side of the sidecar's loopback arrangement (dotnet/). Its tests also check that the
+  # package carries the crates' version.
+  dotnet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: dotnet/global.json
+
+      - name: Test
+        working-directory: dotnet
+        run: dotnet test --solution TauriKit.Sidecar.slnx
