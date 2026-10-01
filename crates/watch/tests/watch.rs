@@ -63,6 +63,19 @@ impl Harness {
         latest
     }
 
+    /// Whether a [`Notice::Rescan`] arrives before patience runs out. Changes on the way are let by.
+    fn rescan_arrives(&self) -> bool {
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match self.notices.recv_timeout(left) {
+                Ok(Notice::Rescan) => return true,
+                Ok(Notice::Changed(_)) => {}
+                Err(_) => return false,
+            }
+        }
+    }
+
     fn nothing_for(&self, what: &str) {
         match self.notices.recv_timeout(QUIET) {
             Err(_) => {}
@@ -227,4 +240,36 @@ fn refuses_a_probe_faster_than_the_debounce_window() {
         .start(|_| {})
         .unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+fn is_head(path: &Path) -> bool {
+    path == Path::new(".git").join("HEAD")
+}
+
+#[test]
+fn a_path_the_app_names_asks_for_a_rescan_even_inside_an_ignored_folder() {
+    let h = watch(|w| w.ignore(|p| p.starts_with(".git")).rescan_on(is_head));
+    fs::create_dir_all(h.path(".git/objects")).unwrap();
+    fs::write(h.path(".git/objects/ab"), "object").unwrap();
+    h.nothing_for("writes inside the ignored folder");
+    fs::write(h.path(".git/HEAD"), "ref: refs/heads/other\n").unwrap();
+    assert!(h.rescan_arrives(), "the branch record changed");
+}
+
+#[test]
+fn the_rescan_takes_the_place_of_the_batch_it_came_in() {
+    let h = watch(|w| w.rescan_on(|p| p == Path::new("RELOAD")));
+    fs::write(h.path("note.md"), "hello").unwrap();
+    fs::write(h.path("RELOAD"), "now").unwrap();
+    assert!(h.rescan_arrives());
+    // Read again from here: what the rescan covered is not reported on top of it.
+    h.nothing_for("changes the rescan already covers");
+}
+
+#[test]
+fn without_the_rule_an_ignored_path_stays_quiet() {
+    let h = watch(|w| w.ignore(|p| p.starts_with(".git")));
+    fs::create_dir_all(h.path(".git")).unwrap();
+    fs::write(h.path(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    h.nothing_for("an ignored path no rule names");
 }

@@ -5,6 +5,16 @@ version. The format is based on [Keep a Changelog](https://keepachangelog.com/en
 project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while the version is
 `0.x`, a minor release may change the API).
 
+## [Unreleased]
+
+### Added
+
+- `tauri-kit-watch`: `Watch::rescan_on(rule)` names paths whose change means the whole folder may
+  have changed — a record kept beside the files that says which set of them is there, such as a
+  repository's `.git/HEAD` when another tool switches branches. A batch that touches one is
+  delivered as `Notice::Rescan` instead of file by file. The rule is asked before `Watch::ignore`,
+  so the path can sit in a folder that is otherwise ignored.
+
 ## [0.5.0] - 2026-09-30
 
 ### Added

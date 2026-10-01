@@ -93,13 +93,14 @@ pub enum ChangeKind {
     Removed,
 }
 
-type IgnoreRule = Arc<dyn Fn(&Path) -> bool + Send + Sync>;
+type PathRule = Arc<dyn Fn(&Path) -> bool + Send + Sync>;
 
 /// A watch to start: the folder and how its changes are reported.
 pub struct Watch {
     root: PathBuf,
     debounce: Duration,
-    ignore: Option<IgnoreRule>,
+    ignore: Option<PathRule>,
+    rescan_on: Option<PathRule>,
     own: Option<OwnWrites>,
     probe: Option<(PathBuf, Duration)>,
 }
@@ -110,6 +111,7 @@ impl fmt::Debug for Watch {
             .field("root", &self.root)
             .field("debounce", &self.debounce)
             .field("ignore", &self.ignore.is_some())
+            .field("rescan_on", &self.rescan_on.is_some())
             .field("own_writes", &self.own.is_some())
             .field("probe", &self.probe)
             .finish()
@@ -123,6 +125,7 @@ impl Watch {
             root: root.into(),
             debounce: DEFAULT_DEBOUNCE,
             ignore: None,
+            rescan_on: None,
             own: None,
             probe: None,
         }
@@ -139,6 +142,19 @@ impl Watch {
     /// app keeps its own state in (`.git`, a cache) is a typical match.
     pub fn ignore(mut self, rule: impl Fn(&Path) -> bool + Send + Sync + 'static) -> Self {
         self.ignore = Some(Arc::new(rule));
+        self
+    }
+
+    /// Paths whose change means the whole folder may have changed. When one changes the app gets
+    /// [`Notice::Rescan`] instead of the batch, and reads the folder again.
+    ///
+    /// For a record kept beside the files that says which set of them is there: a repository's
+    /// `.git/HEAD` names the checked-out branch, and when another tool switches branches the
+    /// working files are replaced wholesale — reported file by file, that arrives as a storm and
+    /// in pieces. The rule gets each path relative to the watched folder, and is asked before
+    /// [`Watch::ignore`], so the path can sit in a folder that is otherwise ignored.
+    pub fn rescan_on(mut self, rule: impl Fn(&Path) -> bool + Send + Sync + 'static) -> Self {
+        self.rescan_on = Some(Arc::new(rule));
         self
     }
 
@@ -182,7 +198,12 @@ impl Watch {
             ));
         }
         let shared = Arc::new(Shared {
-            resolver: Mutex::new(Resolver::new(root.clone(), self.ignore, self.own)),
+            resolver: Mutex::new(Resolver::new(
+                root.clone(),
+                self.ignore,
+                self.rescan_on,
+                self.own,
+            )),
             on_notice: Mutex::new(Box::new(on_notice)),
             liveness: Mutex::new(Liveness::default()),
             root: root.clone(),
@@ -508,6 +529,19 @@ impl Fingerprint {
     }
 }
 
+/// The paths a batch says were made, changed or removed.
+fn changed_paths(events: &[DebouncedEvent]) -> impl Iterator<Item = &PathBuf> {
+    events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.kind,
+                EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
+            )
+        })
+        .flat_map(|e| e.paths.iter())
+}
+
 /// Turns a debounced batch into what the app is told.
 ///
 /// Notifications alone do not say everything that changed: on Linux a file made in a folder that
@@ -517,7 +551,8 @@ impl Fingerprint {
 /// batch touches are listed anew and compared with what they held, and a new folder is read whole.
 struct Resolver {
     root: PathBuf,
-    ignore: Option<IgnoreRule>,
+    ignore: Option<PathRule>,
+    rescan_on: Option<PathRule>,
     own: Option<OwnWrites>,
     /// Each watched folder (absolute) and its entries when last listed: name → is a folder.
     folders: HashMap<PathBuf, HashMap<OsString, bool>>,
@@ -539,10 +574,16 @@ impl Batch {
 }
 
 impl Resolver {
-    fn new(root: PathBuf, ignore: Option<IgnoreRule>, own: Option<OwnWrites>) -> Self {
+    fn new(
+        root: PathBuf,
+        ignore: Option<PathRule>,
+        rescan_on: Option<PathRule>,
+        own: Option<OwnWrites>,
+    ) -> Self {
         let mut resolver = Self {
             root,
             ignore,
+            rescan_on,
             own,
             folders: HashMap::new(),
         };
@@ -561,7 +602,10 @@ impl Resolver {
         let lost = match &result {
             // Errors from the platform watcher: what was missed is unknown.
             Err(_) => true,
-            Ok(events) => events.iter().any(|e| e.need_rescan()),
+            Ok(events) => {
+                events.iter().any(|e| e.need_rescan())
+                    || changed_paths(events).any(|path| self.says_rescan(path))
+            }
         };
         if lost {
             self.reindex();
@@ -575,16 +619,7 @@ impl Resolver {
         let mut batch = Batch::default();
         let mut touched = HashSet::new();
         let mut folders: Vec<PathBuf> = Vec::new();
-        let paths = events
-            .iter()
-            .filter(|e| {
-                matches!(
-                    e.kind,
-                    EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
-                )
-            })
-            .flat_map(|e| e.paths.iter());
-        for path in paths {
+        for path in changed_paths(events) {
             if !touched.insert(path.clone()) || self.relative_if_watched(path).is_none() {
                 continue;
             }
@@ -683,6 +718,16 @@ impl Resolver {
         Some(listed)
     }
 
+    /// Whether a change at `path` is one the app asked to hear as [`Notice::Rescan`].
+    fn says_rescan(&self, path: &Path) -> bool {
+        let Some(rule) = &self.rescan_on else {
+            return false;
+        };
+        path.strip_prefix(&self.root).is_ok_and(|relative| {
+            !relative.as_os_str().is_empty() && !is_temporary(relative) && rule(relative)
+        })
+    }
+
     /// The path relative to the root, unless it is outside it, the root itself, a temporary file
     /// or ignored.
     fn relative_if_watched<'a>(&self, path: &'a Path) -> Option<&'a Path> {
@@ -763,7 +808,7 @@ mod tests {
     }
 
     fn resolver(root: &Path) -> Resolver {
-        Resolver::new(resolved(root).unwrap(), None, None)
+        Resolver::new(resolved(root).unwrap(), None, None, None)
     }
 
     fn change(path: &Path, kind: ChangeKind) -> Change {
