@@ -1,0 +1,20 @@
+[package]
+name = "tauri-kit-webview"
+version.workspace = true
+description = "The web view runtime under a desktop app's window: say in the person's language when WebView2 is missing, and keep form entries out of the web view's profile."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+keywords = ["tauri", "webview2", "autofill", "desktop"]
+categories = ["gui", "os"]
+
+# The web view types an app holds come from the same `webview2-com` its Tauri version uses; the
+# major version here follows Tauri's, so a controller the app passes in is the type expected here.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows-core = "0.62"
+windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }
+
+[dev-dependencies]
+tempfile = "3"

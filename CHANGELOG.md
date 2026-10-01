@@ -32,6 +32,18 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   exception type and the innermost frame in the app's own namespaces — never the message), and
   `RunAnnouncingAsync` (writes the readiness line once listening). Compatible with ahead-of-time
   compilation. CI tests it on Linux.
+- `tauri-kit-webview`, a new crate for the web view runtime under a desktop app's window.
+  `runtime()` answers `Installed(version)`, `Missing` or `System`: on Windows it asks the WebView2
+  loader, which needs the runtime's files on disk, so a registration left without its files counts
+  as missing; on macOS and Linux the system web view is always there. `alert(title, body)` shows
+  the app's own message before any window exists (a message box on Windows, standard error
+  elsewhere) — the crate supplies no wording. `forget_form_entries(controller)` clears the form
+  entries and saved passwords a WebView2 profile remembered, for an app that has turned autofill
+  off and must not keep what an earlier version let it remember; it takes the
+  `ICoreWebView2Controller` the app already holds (`with_webview` on a Tauri window), so the crate
+  does not depend on `tauri`, and its `webview2-com` major follows the one Tauri uses.
+  `remove_profile_snapshots(data_dir)` removes the copies of the profile WebView2 takes before
+  updating itself, which would carry those entries along; nothing to remove is not an error.
 
 ## [0.7.0] - 2026-10-01
 
