@@ -193,6 +193,42 @@ impl Response {
     pub fn is_success(&self) -> bool {
         (200..300).contains(&self.status)
     }
+
+    /// What the host said about a request it failed, when it said something: the body
+    /// `{"fault":{…}}` that `UseFaults` in `TauriKit.Sidecar.Loopback` answers an unexpected
+    /// exception with. `None` for a 2xx answer and for any other body.
+    pub fn fault(&self) -> Option<Fault> {
+        #[derive(serde::Deserialize)]
+        struct Answer {
+            fault: Fault,
+        }
+        if self.is_success() {
+            return None;
+        }
+        serde_json::from_str::<Answer>(&self.body)
+            .ok()
+            .map(|a| a.fault)
+    }
+}
+
+/// An unexpected failure on the host side, without anything it was about — the shape of
+/// `FaultView` in `TauriKit.Sidecar.Loopback`: the exception's type, and the methods of the app's
+/// own code it passed through, innermost first ([`at`](Fault::at) is the first of them). The
+/// exception's message never crosses: it can quote the data the request was about.
+///
+/// It reads a list of them too, for a host that keeps failures of work no request waited on and
+/// hands them over when asked.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct Fault {
+    /// The exception's type, such as `System.IO.IOException`.
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// The innermost method of the app's own code, when the failure passed through any.
+    #[serde(default)]
+    pub at: Option<String>,
+    /// The app's own methods the failure passed through, innermost first.
+    #[serde(default)]
+    pub frames: Vec<String>,
 }
 
 /// Why a request got no answer.
@@ -303,6 +339,53 @@ mod tests {
     fn a_token_never_shows_in_debug_output() {
         let token = Token::generate().unwrap();
         assert!(!format!("{token:?}").contains(token.as_str()));
+    }
+
+    #[test]
+    fn a_failed_answer_says_what_failed() {
+        let failed = Response {
+            status: 500,
+            body: r#"{"fault":{"type":"System.IO.IOException","at":"App.Store.Read","frames":["App.Store.Read","App.Api.Get"]}}"#.into(),
+        };
+        assert_eq!(
+            failed.fault(),
+            Some(Fault {
+                kind: "System.IO.IOException".into(),
+                at: Some("App.Store.Read".into()),
+                frames: vec!["App.Store.Read".into(), "App.Api.Get".into()],
+            })
+        );
+    }
+
+    #[test]
+    fn a_fault_outside_the_apps_code_has_no_frames() {
+        let failed = Response {
+            status: 500,
+            body: r#"{"fault":{"type":"System.InvalidOperationException","at":null,"frames":[]}}"#
+                .into(),
+        };
+        let fault = failed.fault().unwrap();
+        assert_eq!(fault.at, None);
+        assert!(fault.frames.is_empty());
+    }
+
+    #[test]
+    fn only_a_failed_answer_with_a_fault_body_has_a_fault() {
+        let ok = Response {
+            status: 200,
+            body: r#"{"fault":{"type":"X","frames":[]}}"#.into(),
+        };
+        assert_eq!(ok.fault(), None);
+        let bare = Response {
+            status: 503,
+            body: String::new(),
+        };
+        assert_eq!(bare.fault(), None);
+        let other = Response {
+            status: 400,
+            body: r#"{"error":"bad"}"#.into(),
+        };
+        assert_eq!(other.fault(), None);
     }
 
     #[test]

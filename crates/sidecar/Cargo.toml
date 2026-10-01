@@ -11,12 +11,15 @@ categories = ["os"]
 
 [features]
 # A sidecar that serves HTTP on 127.0.0.1 with a per-run token: the token, the readiness line that
-# announces the port, and a client. Off by default — it brings an HTTP client along.
-loopback = ["dep:getrandom", "dep:ureq"]
+# announces the port, a client, and the host side's failure answer. Off by default — it brings an
+# HTTP client and a JSON reader along.
+loopback = ["dep:getrandom", "dep:ureq", "dep:serde", "dep:serde_json"]
 
 [dependencies]
 getrandom = { version = "0.3", optional = true }
 ureq = { version = "3", default-features = false, optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

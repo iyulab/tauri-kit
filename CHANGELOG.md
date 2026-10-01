@@ -16,6 +16,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   whole. At most `MAX_DETAILS` (8) per report; a name given again replaces its value. Details
   are written in the report's JSON line only when there are some (older lines still read) and
   go out as the exception item's `properties`.
+- `tauri-kit-sidecar` (`loopback`): `Response::fault` reads the host side's failure answer
+  (`{"fault":{…}}` from `UseFaults` in `TauriKit.Sidecar.Loopback`) as a `Fault` — its type, the
+  innermost frame of the app's own code and the frames it passed through. `Fault` also reads a list
+  of them, for a host that hands over failures of work no request waited on. The feature now brings
+  `serde` and `serde_json` along.
 
 ### Fixed
 

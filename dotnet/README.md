@@ -13,7 +13,7 @@ The app starts the sidecar with a fresh random token in an environment variable.
 - reports an unexpected failure as its exception type and the frames in the app's own code it
   passed through, innermost first (`{"fault":{"type","at","frames"}}`) — never the message, which
   can quote the data the request was about. `Fault.Of` reads a failure away from any request the
-  same way.
+  same way. On the Rust side, `Response::fault` reads that answer as a `Fault`.
 
 The variable's name and the line's prefix are the app's, and must match what the Rust side is
 given.
