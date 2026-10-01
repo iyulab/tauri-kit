@@ -1,0 +1,30 @@
+[package]
+name = "tauri-kit-diagnostics"
+version.workspace = true
+description = "Content-free error reports for desktop apps: built from an allowlist, never from messages, queued on disk, optionally sent to Application Insights."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+keywords = ["tauri", "error-reporting", "telemetry", "privacy", "desktop"]
+categories = ["development-tools::debugging"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri-kit-fs = { path = "../fs", version = "0.6.0" }
+# HTTPS through the OS's TLS and certificate store, and the proxy the PC is set up with. The
+# `native-tls-no-default` feature alone does not compile the native-tls transport in ureq 3.4, so
+# the full feature is needed.
+ureq = { version = "3", default-features = false, features = ["native-tls", "win-system-proxy"], optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+# `Sink`: send queued reports to an Application Insights resource. Off by default, so an app that
+# only keeps reports on disk takes no HTTP client.
+appinsights = ["dep:ureq"]
+
+[package.metadata.docs.rs]
+all-features = true

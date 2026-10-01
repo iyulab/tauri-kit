@@ -24,6 +24,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   good.
 - `tauri-kit-fs`: `append_line` appends one line and its newline in one write, flushed to the
   device, creating the file and its folders if needed; a line holding a line break is refused.
+- `tauri-kit-diagnostics`, a new crate: error reports that carry no content. `Report::new` keeps
+  only the layer's name, a kind that is a plain identifier (anything else becomes `Unrecognized`)
+  and the frames a `Layer`'s `FrameRule` recognises as the app's own code — `WebBundle` (scripts
+  served from the app's own origin), `RustSource` (the app's `src/`) or `DotNetMethod` (method names
+  only) — plus the app's version, the platform and the time; messages are never taken. `Reporter`
+  appends one launch's reports to a JSON Lines file, once per failure (layer, kind and first frame)
+  and at most `MAX_REPORTS`, and `trim` drops the oldest whole reports once the file passes a size,
+  moving the sent offset back with them. With the `appinsights` feature, `Sink` parses an
+  Application Insights connection string and `Sink::send_pending` sends what the file gained since
+  the last send in batches, stopping on 408, 429 and 5xx answers so those reports go out later.
 
 ### Changed
 
