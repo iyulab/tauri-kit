@@ -118,7 +118,12 @@ pub fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
 fn move_noclobber(from: &Path, to: &Path) -> io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_WRITE_THROUGH};
-    let wide = |p: &Path| p.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<u16>>();
+    let wide = |p: &Path| {
+        p.as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<u16>>()
+    };
     let (from, to) = (wide(from), wide(to));
     // Without MOVEFILE_REPLACE_EXISTING the move fails if the target exists.
     // SAFETY: both are NUL-terminated wide strings that outlive the call.
