@@ -7,6 +7,17 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- `tauri-kit-fs`: `free_path(dir, name, kind)` finds the first free name in a folder — `notes.md`,
+  then `notes (1).md`, `notes (2).md`, … — numbering a file before its last extension and a folder
+  at the end (`NameKind`). `claim_free_path(dir, name, kind, create)` creates something under it
+  and moves on to the next free name when `create` reports the name was taken in the meantime
+  (`AlreadyExists`), up to `CLAIM_TRIES` times; what to create stays the caller's choice
+  (`File::create_new`, `create_dir`, `write_atomic_new`, `rename_new`). `is_taken(path)` is the
+  test both use: a symbolic link that points nowhere counts as taken, since creating or moving
+  onto it is refused.
+
 ## [0.10.0] - 2026-10-01
 
 ### Added

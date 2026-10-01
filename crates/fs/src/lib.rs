@@ -34,6 +34,10 @@
 //! Sync clients keep both sides of a conflicting change, the second under a marked name;
 //! [`conflict_copy_of`] recognises those names and says which file each is a copy of.
 //!
+//! A new file or folder whose name is taken goes under the next free one — `notes (1).md` —
+//! found by [`free_path`] and taken by [`claim_free_path`], which moves on if another program takes
+//! the name first. [`is_taken`] is the test both use: a link that points nowhere is taken too.
+//!
 //! [`Writer`] holds the options — staging directory, temp-file prefix, patience — for apps that
 //! write the same way from several places.
 //!
@@ -61,6 +65,8 @@ pub use append::append_line;
 pub use conflict::conflict_copy_of;
 pub use root::{is_outside, Root};
 pub use trash::has_trash;
+mod name;
+pub use name::{claim_free_path, free_path, is_taken, NameKind, CLAIM_TRIES};
 
 /// Prefix of every temporary file this crate creates, unless the app chooses its own with
 /// [`Writer::temp_prefix`]. [`sweep_staging`] removes only files that carry it, so a staging

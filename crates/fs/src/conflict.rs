@@ -44,7 +44,7 @@ pub fn conflict_copy_of(file_name: &str) -> Option<String> {
 }
 
 /// Splits off the last extension, dot included. A leading dot (`.profile`) is not an extension.
-fn split_extension(name: &str) -> (&str, &str) {
+pub(crate) fn split_extension(name: &str) -> (&str, &str) {
     match name.rfind('.') {
         Some(i) if i > 0 => name.split_at(i),
         _ => (name, ""),
