@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Fixed
+
+- `TauriKit.Sidecar.Loopback`: the package now carries the `LICENSE` text, not only the MIT
+  expression — MIT asks that the copyright and permission notice travel with each copy.
+
 ## [0.9.1] - 2026-10-01
 
 ### Fixed
