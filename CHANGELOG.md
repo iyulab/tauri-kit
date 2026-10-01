@@ -9,11 +9,6 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ### Added
 
-- `tauri-kit-watch`: `Watch::ignore_files(rule)` leaves out files the rule matches and is never asked about a
-  folder, so every folder stays watched. An app that hears only its own kind of file says so with it: a rule like
-  "not a `.md` file" given to `Watch::ignore` matches every folder too, and the files of a folder moved in or removed
-  whole then went unreported. `Watch::ignore` keeps its meaning — a folder it matches is not looked into — and its
-  documentation now says so.
 - `tauri-kit-diagnostics`: an `appinsights-rustls` feature — the same `Sink`, with rustls doing the
   TLS handshake against the OS's certificate store (rustls-platform-verifier) and the system proxy
   as before. `appinsights` hands TLS to the OS's own stack, which is OpenSSL on Linux, so its lock
