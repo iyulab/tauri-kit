@@ -273,3 +273,45 @@ fn without_the_rule_an_ignored_path_stays_quiet() {
     fs::write(h.path(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
     h.nothing_for("an ignored path no rule names");
 }
+
+/// A file another program makes and removes again quickly can be seen by the folder listing that
+/// a change beside it causes, while the platform's own notifications for it cancel out. Its
+/// removal must still be reported: the app must not keep a file that is gone.
+#[test]
+fn a_file_seen_beside_another_change_and_removed_at_once_is_reported_gone() {
+    // Like an app that hears only its own kind of file: folders do not end in it, so their own
+    // notifications are left out too.
+    let h = watch(|w| w.ignore(|p| p.extension().is_none_or(|e| e != "md")));
+    fs::create_dir(h.path("sub")).unwrap();
+    fs::write(h.path("sub/a.md"), "a").unwrap();
+    h.changes_until(|c| has(c, "sub/a.md", ChangeKind::Written));
+    let mut seen_written = 0;
+    for (round, offset) in [30u64, 50, 70, 90, 110, 130].into_iter().enumerate() {
+        let stray = h.path("sub/stray.md");
+        fs::write(h.path(&format!("sub/b{round}.md")), "b").unwrap();
+        std::thread::sleep(Duration::from_millis(offset));
+        fs::write(&stray, "s").unwrap();
+        // The batch for b: once it is here, take the stray file away again at once.
+        let first = h.notices.recv_timeout(PATIENCE).expect("a batch");
+        fs::remove_file(&stray).unwrap();
+        let mut latest: Vec<Change> = match first {
+            Notice::Changed(c) => c,
+            Notice::Rescan => panic!("unexpected rescan"),
+        };
+        while let Ok(notice) = h.notices.recv_timeout(QUIET) {
+            if let Notice::Changed(changes) = notice {
+                for change in changes {
+                    latest.retain(|c| c.path != change.path);
+                    latest.push(change);
+                }
+            }
+        }
+        if has(&latest, "sub/stray.md", ChangeKind::Written) {
+            panic!("round {round} (offset {offset} ms): the stray file was reported written and never removed: {latest:?}");
+        }
+        if latest.iter().any(|c| c.path == Path::new("sub/stray.md")) {
+            seen_written += 1;
+        }
+    }
+    eprintln!("rounds in which the stray file was reported at all: {seen_written}");
+}

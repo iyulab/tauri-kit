@@ -642,21 +642,31 @@ impl Resolver {
             }
         }
         for folder in folders {
-            self.relist(&folder, &mut batch);
+            self.relist(&folder, &touched, &mut batch);
         }
         batch.changes
     }
 
-    /// Compares a folder with what it held when last listed.
-    fn relist(&mut self, folder: &Path, batch: &mut Batch) {
+    /// Compares a folder with what it held when last listed. `announced` are the paths this
+    /// batch's notifications name.
+    ///
+    /// A file that is new to the folder is reported, and remembered, only when a notification
+    /// names it. One that is not named yet has its notification still on the way — held back by
+    /// the debounce window — and that notification reports it; but if the file is removed again
+    /// before the window ends, the platform watcher's creation and removal cancel out and no
+    /// notification ever comes. Reported or remembered from the listing, it would then stay as a
+    /// file that is gone. A folder listed for the first time is taken as it is: its files were
+    /// there before and are not changes.
+    fn relist(&mut self, folder: &Path, announced: &HashSet<PathBuf>, batch: &mut Batch) {
         let before = self.folders.get(folder).cloned();
-        let Some(now) = self.list(folder) else {
+        let Some(mut now) = self.list(folder) else {
             // The folder is gone, and with it everything that was in it.
             if before.is_some() {
                 self.removed_tree(folder, batch);
             }
             return;
         };
+        let first_listing = before.is_none();
         let before = before.unwrap_or_default();
         for (name, was_folder) in &before {
             if now.get(name) == Some(was_folder) {
@@ -669,19 +679,27 @@ impl Resolver {
                 self.removed(&path, batch);
             }
         }
-        self.folders.insert(folder.to_path_buf(), now.clone());
         let mut found = Vec::new();
+        let mut unannounced = Vec::new();
         for (name, is_folder) in &now {
             if before.get(name) == Some(is_folder) {
                 continue;
             }
             let path = folder.join(name);
             if *is_folder {
+                // A folder that arrived whole (moved in, say): its files have no notifications
+                // of their own.
                 self.read_folder(&path, &mut found);
-            } else {
+            } else if announced.contains(&path) {
                 found.push(path);
+            } else if !first_listing {
+                unannounced.push(name.clone());
             }
         }
+        for name in unannounced {
+            now.remove(&name);
+        }
+        self.folders.insert(folder.to_path_buf(), now);
         for file in found {
             self.written(&file, batch);
         }

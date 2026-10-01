@@ -7,6 +7,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Fixed
+
+- `tauri-kit-watch`: a file another program made and removed again quickly could be reported as
+  written and never as removed, when a change beside it in the same folder made the watch list
+  that folder before the file's own notification came. The platform watcher's creation and
+  removal of such a file cancel out, so no notification ever corrected it, and the app kept a
+  file that was gone. A file new to a listed folder is now reported only when a notification
+  names it. Also, a folder listed for the first time no longer reports every file in it as
+  written — its files were already there.
+
 ### Added
 
 - README: how the .NET package is released alongside the crates (the `Publish NuGet` workflow,
