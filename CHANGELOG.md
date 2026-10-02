@@ -57,6 +57,17 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   line is appended to it, the ones `Sidecar::wait_line` takes included; before, stdout after the
   accepted line was drained and dropped. Breaking for code that builds the variant: write
   `Output::Lines { stdout: None, stderr }` to keep the old behavior.
+- `tauri-kit-watch` builds on `notify` directly and gathers notifications itself, each delivered
+  once every path it names has been quiet for the debounce window, as before. `notify-debouncer-full`
+  is no longer a dependency.
+
+### Fixed
+
+- `tauri-kit-watch`: on macOS, a folder that was there before the watch and was removed whole went
+  unreported. The platform hands a removed path's earlier history over with the removal — each file
+  "created, removed, modified" — and the debouncer cancelled the creation against the removal,
+  leaving no notification at all. Notifications are now only gathered, and the disk decides what
+  changed; a file made and removed again within one window is still not reported.
 
 ## [0.10.0] - 2026-10-01
 

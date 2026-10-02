@@ -19,7 +19,13 @@ struct Harness {
 }
 
 fn watch(configure: impl FnOnce(Watch) -> Watch) -> Harness {
+    watch_over(|_| {}, configure)
+}
+
+/// A watch over a folder `prepare` filled before the watch began.
+fn watch_over(prepare: impl FnOnce(&Path), configure: impl FnOnce(Watch) -> Watch) -> Harness {
     let dir = tempfile::tempdir().unwrap();
+    prepare(dir.path());
     let own = OwnWrites::new();
     let (tx, notices) = mpsc::channel();
     let watcher = configure(Watch::new(dir.path()).debounce(DEBOUNCE).own_writes(&own))
@@ -357,10 +363,6 @@ fn a_folder_removed_whole_reports_its_files_gone_when_only_files_are_ignored() {
     fs::write(h.path("sub/a.md"), "a").unwrap();
     fs::write(h.path("sub/x.txt"), "x").unwrap();
     h.changes_until(|c| has(c, "sub/a.md", ChangeKind::Written));
-    // A folder removed whole is one that has been there a while. Removed at once, macOS can hand
-    // its files over as made and removed in one go — no change at all, which is right for that.
-    std::thread::sleep(QUIET);
-    while h.notices.try_recv().is_ok() {}
     fs::remove_dir_all(h.path("sub")).unwrap();
     let changes = h.changes_until(|c| has(c, "sub/a.md", ChangeKind::Removed));
     assert!(
@@ -386,5 +388,48 @@ fn ignoring_files_leaves_the_folders_they_are_in_watched() {
             path: PathBuf::from("notes/a.md"),
             kind: ChangeKind::Written
         }]
+    );
+}
+
+fn a_folder_with_files(root: &Path) {
+    fs::create_dir(root.join("sub")).unwrap();
+    fs::write(root.join("sub/a.md"), "a").unwrap();
+    fs::write(root.join("sub/x.txt"), "x").unwrap();
+}
+
+// What a sync client does to a folder that was there all along. macOS hands its files' earlier
+// history over with the removal — each one "created, removed, modified" — and a change is still
+// reported.
+
+#[test]
+fn a_folder_there_before_the_watch_and_removed_whole_reports_its_files_gone() {
+    let h = watch_over(a_folder_with_files, |w| w);
+    fs::remove_dir_all(h.path("sub")).unwrap();
+    let changes = h.changes_until(|c| {
+        has(c, "sub/a.md", ChangeKind::Removed) && has(c, "sub/x.txt", ChangeKind::Removed)
+    });
+    assert!(
+        has(&changes, "sub/a.md", ChangeKind::Removed),
+        "{changes:?}"
+    );
+    assert!(
+        has(&changes, "sub/x.txt", ChangeKind::Removed),
+        "{changes:?}"
+    );
+}
+
+#[test]
+fn a_folder_there_before_the_watch_and_removed_whole_reports_its_files_gone_when_only_files_are_ignored(
+) {
+    let h = watch_over(a_folder_with_files, md_only);
+    fs::remove_dir_all(h.path("sub")).unwrap();
+    let changes = h.changes_until(|c| has(c, "sub/a.md", ChangeKind::Removed));
+    assert!(
+        has(&changes, "sub/a.md", ChangeKind::Removed),
+        "{changes:?}"
+    );
+    assert!(
+        !changes.iter().any(|c| c.path == Path::new("sub/x.txt")),
+        "{changes:?}"
     );
 }

@@ -10,7 +10,7 @@ keywords = ["tauri", "watch", "notify", "file", "desktop"]
 categories = ["filesystem"]
 
 [dependencies]
-notify-debouncer-full = "0.7"
+notify = "8.2"
 tauri-kit-fs = { path = "../fs", version = "0.10.0" }
 
 [dev-dependencies]

@@ -55,15 +55,13 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{fmt, fs, io};
 
-use notify_debouncer_full::notify::{self, EventKind, RecommendedWatcher, RecursiveMode};
-use notify_debouncer_full::{
-    new_debouncer, DebounceEventResult, DebouncedEvent, Debouncer, RecommendedCache,
-};
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 
 /// How long notifications are gathered before a batch is delivered, unless the app chooses.
 pub const DEFAULT_DEBOUNCE: Duration = Duration::from_millis(300);
@@ -253,7 +251,9 @@ impl Watch {
 }
 
 type Handler = Box<dyn FnMut(Notice) + Send>;
-type PlatformWatch = Debouncer<RecommendedWatcher, RecommendedCache>;
+
+/// What one window of notifications amounts to: the events, or the errors that mean some were lost.
+type Gathered = Result<Vec<Event>, Vec<notify::Error>>;
 
 /// What the platform watch's callback and the probe share.
 struct Shared {
@@ -267,16 +267,10 @@ struct Shared {
 impl Shared {
     /// Starts a platform watch that delivers to this.
     fn watch(self: &Arc<Self>) -> io::Result<PlatformWatch> {
-        let shared = Arc::clone(self);
-        let mut watch = new_debouncer(self.debounce, None, move |result| shared.deliver(result))
-            .map_err(notify_error)?;
-        watch
-            .watch(&self.root, RecursiveMode::Recursive)
-            .map_err(notify_error)?;
-        Ok(watch)
+        PlatformWatch::start(Arc::clone(self))
     }
 
-    fn deliver(&self, result: DebounceEventResult) {
+    fn deliver(&self, result: Gathered) {
         if let Ok(events) = &result {
             relock(&self.liveness).observe(events);
         }
@@ -288,6 +282,98 @@ impl Shared {
 
     fn tell(&self, notice: Notice) {
         (relock(&self.on_notice))(notice);
+    }
+}
+
+/// The platform watcher and the thread that gathers its notifications into windows. Dropping it
+/// stops both; a window still gathering is not delivered.
+///
+/// Notifications are only gathered, never interpreted: the resolver decides what changed by looking
+/// at the disk. A debouncer that cancels a creation against a removal of the same path loses a
+/// change that happened — macOS hands over a path's earlier history with its removal (a folder that
+/// was there all along is removed as "created, removed, modified"), so cancelled, a folder removed
+/// whole would go unheard.
+struct PlatformWatch {
+    _watcher: RecommendedWatcher,
+    stopped: Arc<AtomicBool>,
+}
+
+impl PlatformWatch {
+    fn start(shared: Arc<Shared>) -> io::Result<Self> {
+        let (tx, rx) = mpsc::channel();
+        let mut watcher = notify::recommended_watcher(move |result| {
+            let _ = tx.send(result);
+        })
+        .map_err(notify_error)?;
+        watcher
+            .watch(&shared.root, RecursiveMode::Recursive)
+            .map_err(notify_error)?;
+        let stopped = Arc::new(AtomicBool::new(false));
+        let stop = Arc::clone(&stopped);
+        thread::Builder::new()
+            .name("tauri-kit-watch-gather".into())
+            .spawn(move || gather(&rx, &shared, &stop))?;
+        Ok(Self {
+            _watcher: watcher,
+            stopped,
+        })
+    }
+}
+
+impl Drop for PlatformWatch {
+    fn drop(&mut self) {
+        // The watcher drops after this, closing the channel; the thread then ends on its own. It is
+        // not joined: the app may drop the watch from within its own handler, on that thread.
+        self.stopped.store(true, Ordering::SeqCst);
+    }
+}
+
+/// Gathers notifications and delivers each once every path it names has been quiet for the
+/// debounce window — a save that takes several notifications arrives in one batch — in the order
+/// they came. An error is delivered at once, in place of what was gathered: the app reads
+/// everything again anyway.
+fn gather(rx: &mpsc::Receiver<notify::Result<Event>>, shared: &Shared, stopped: &AtomicBool) {
+    let window = shared.debounce;
+    let tick = (window / 4).max(Duration::from_millis(1));
+    let mut pending: Vec<Event> = Vec::new();
+    let mut last_heard: HashMap<PathBuf, Instant> = HashMap::new();
+    loop {
+        let received = rx.recv_timeout(tick);
+        if stopped.load(Ordering::SeqCst) {
+            return;
+        }
+        match received {
+            Ok(Ok(event)) => {
+                let now = Instant::now();
+                for path in &event.paths {
+                    last_heard.insert(path.clone(), now);
+                }
+                pending.push(event);
+                continue;
+            }
+            Ok(Err(error)) => {
+                pending.clear();
+                last_heard.clear();
+                shared.deliver(Err(vec![error]));
+                continue;
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+        let now = Instant::now();
+        let quiet = |path: &PathBuf| {
+            last_heard
+                .get(path)
+                .is_none_or(|heard| now.duration_since(*heard) >= window)
+        };
+        let (ready, waiting): (Vec<Event>, Vec<Event>) = std::mem::take(&mut pending)
+            .into_iter()
+            .partition(|e| e.paths.iter().all(quiet));
+        pending = waiting;
+        last_heard.retain(|_, heard| now.duration_since(*heard) < window);
+        if !ready.is_empty() {
+            shared.deliver(Ok(ready));
+        }
     }
 }
 
@@ -355,7 +441,7 @@ impl Liveness {
         self.misses >= MISSES_BEFORE_RESTART
     }
 
-    fn observe(&mut self, events: &[DebouncedEvent]) {
+    fn observe(&mut self, events: &[Event]) {
         let Some(pending) = &self.pending else {
             return;
         };
@@ -391,8 +477,8 @@ impl Probe {
             .name("tauri-kit-watch-probe".into())
             .spawn(move || {
                 let mut count: u64 = 0;
-                // A probe stays until the next one: made and removed within one batch, the two
-                // notifications would cancel out and the probe would never be heard.
+                // A probe stays until the next one: made and removed within one window, it is
+                // gone when the batch is resolved and would never be heard.
                 let mut last: Option<PathBuf> = None;
                 // Anything on the channel, or the watcher dropping its end, stops the probe.
                 while let Err(mpsc::RecvTimeoutError::Timeout) = stopped.recv_timeout(every) {
@@ -551,7 +637,7 @@ impl Fingerprint {
 }
 
 /// The paths a batch says were made, changed or removed.
-fn changed_paths(events: &[DebouncedEvent]) -> impl Iterator<Item = &PathBuf> {
+fn changed_paths(events: &[Event]) -> impl Iterator<Item = &PathBuf> {
     events
         .iter()
         .filter(|e| {
@@ -620,7 +706,7 @@ impl Resolver {
         self.read_folder(&root, &mut Vec::new());
     }
 
-    fn notice(&mut self, result: DebounceEventResult) -> Option<Notice> {
+    fn notice(&mut self, result: Gathered) -> Option<Notice> {
         let lost = match &result {
             // Errors from the platform watcher: what was missed is unknown.
             Err(_) => true,
@@ -637,7 +723,7 @@ impl Resolver {
         (!changes.is_empty()).then_some(Notice::Changed(changes))
     }
 
-    fn changes(&mut self, events: &[DebouncedEvent]) -> Vec<Change> {
+    fn changes(&mut self, events: &[Event]) -> Vec<Change> {
         let mut batch = Batch::default();
         let mut touched = HashSet::new();
         let mut folders: Vec<PathBuf> = Vec::new();
@@ -674,11 +760,11 @@ impl Resolver {
     ///
     /// A file that is new to the folder is reported, and remembered, only when a notification
     /// names it. One that is not named yet has its notification still on the way — held back by
-    /// the debounce window — and that notification reports it; but if the file is removed again
-    /// before the window ends, the platform watcher's creation and removal cancel out and no
-    /// notification ever comes. Reported or remembered from the listing, it would then stay as a
-    /// file that is gone. A folder listed for the first time is taken as it is: its files were
-    /// there before and are not changes.
+    /// the debounce window — and that notification reports it if the file is still there when it
+    /// comes. Reported or remembered from the listing, a file removed again before then would be
+    /// reported as written and then as removed: a change that, by the time the app hears of it,
+    /// never was. A folder listed for the first time is taken as it is: its files were there before
+    /// and are not changes.
     fn relist(&mut self, folder: &Path, announced: &HashSet<PathBuf>, batch: &mut Batch) {
         let before = self.folders.get(folder).cloned();
         let Some(mut now) = self.list(folder) else {
@@ -861,12 +947,10 @@ fn notify_error(e: notify::Error) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use notify_debouncer_full::notify::event::{CreateKind, ModifyKind, RenameMode};
-    use notify_debouncer_full::notify::Event;
-    use std::time::Instant;
+    use notify::event::{CreateKind, ModifyKind, RenameMode};
 
-    fn event(kind: EventKind, path: PathBuf) -> DebouncedEvent {
-        DebouncedEvent::new(Event::new(kind).add_path(path), Instant::now())
+    fn event(kind: EventKind, path: PathBuf) -> Event {
+        Event::new(kind).add_path(path)
     }
 
     fn resolver(root: &Path) -> Resolver {
