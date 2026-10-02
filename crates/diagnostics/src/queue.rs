@@ -18,6 +18,9 @@ pub const CAPPED_KIND: &str = "ReportsCapped";
 /// hundred reports, which only a device failing on every launch for a long time would write.
 pub const MAX_FILE_BYTES: usize = 1 << 20;
 
+/// How many reports one [`Batch`] holds at most — what goes out in one request.
+pub(crate) const BATCH: usize = 100;
+
 /// The reports of one launch, appended to a file (JSON Lines) where the person can read them —
 /// exactly what would be sent.
 ///
@@ -105,7 +108,7 @@ impl Reporter {
 ///
 /// Once `file` holds more than `max_bytes`, the oldest whole reports go until it holds at most half
 /// of that, and the offset recorded in `sent` (how far into `file` has been sent, a decimal number;
-/// see `Sink::send_pending` with the `appinsights` feature) moves back by what went. `sent` is
+/// see [`unsent`] and [`mark_sent`]) moves back by what went. `sent` is
 /// written first — a launch that stops between the two sends a few reports again rather than skip
 /// any — and `file` is replaced crash-safely. Call it before the launch writes or sends anything.
 /// A missing `file` is nothing to trim. Returns how many bytes were dropped.
@@ -129,6 +132,66 @@ pub fn trim(file: &Path, sent: &Path, max_bytes: usize) -> io::Result<usize> {
     }
     tauri_kit_fs::write_atomic(file, &bytes[dropped..])?;
     Ok(dropped)
+}
+
+/// Reports of a file that have not been sent, as they go out in one request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Batch {
+    /// The reports, in the order they were written — at most 100. Empty when every line of the
+    /// stretch was something other than a report; such a batch is still recorded as sent.
+    pub reports: Vec<Report>,
+    /// How far into the file this batch reaches, in bytes: what to record with [`mark_sent`] once
+    /// the batch is handled.
+    pub end: usize,
+}
+
+/// The reports `file` has gained since the offset `sent` records, in the batches they go out in.
+///
+/// For an app that sends with an HTTP client of its own — with the `appinsights` feature,
+/// `Sink::send_pending` does all of it. Send the batches in order and record each one with
+/// [`mark_sent`] once it is handled; stop at the first that is not, so it and those after it are
+/// read again next time.
+///
+/// Only whole lines are read: a last line without its newline (one still being written) is left
+/// for later, and a line that is not a report is passed over. A `file` shorter than what `sent`
+/// records is a new file and is read from its start; a missing `file` has nothing unsent.
+pub fn unsent(file: &Path, sent: &Path) -> io::Result<Vec<Batch>> {
+    use std::io::{Read, Seek};
+    let mut pending = match std::fs::File::open(file) {
+        Ok(f) => f,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let len = usize::try_from(pending.metadata()?.len()).map_err(io::Error::other)?;
+    // A file shorter than what was sent is a new file: the old one was deleted.
+    let mut offset = read_offset(sent)
+        .filter(|&offset| offset <= len)
+        .unwrap_or(0);
+    // Only what follows what was sent is read: the file only grows between trims.
+    pending.seek(io::SeekFrom::Start(offset as u64))?;
+    let mut bytes = Vec::new();
+    pending.read_to_end(&mut bytes)?;
+    // Only whole lines: a launch may still be writing the last one.
+    let end = bytes.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+    let lines: Vec<&[u8]> = bytes[..end].split_inclusive(|&b| b == b'\n').collect();
+    Ok(lines
+        .chunks(BATCH)
+        .map(|batch| {
+            offset += batch.iter().map(|line| line.len()).sum::<usize>();
+            Batch {
+                reports: batch
+                    .iter()
+                    .filter_map(|line| serde_json::from_slice(line).ok())
+                    .collect(),
+                end: offset,
+            }
+        })
+        .collect())
+}
+
+/// Records in `sent` that its report file has been sent up to `end` — a [`Batch::end`].
+pub fn mark_sent(sent: &Path, end: usize) -> io::Result<()> {
+    std::fs::write(sent, end.to_string())
 }
 
 /// The offset `sent` records, if it records one.
@@ -286,5 +349,72 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&sent).unwrap(), "0");
         // No file yet: nothing to do.
         assert_eq!(trim(&dir.path().join("none"), &sent, 16).unwrap(), 0);
+    }
+
+    #[test]
+    fn unsent_reads_what_followed_the_last_send_and_mark_sent_moves_past_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (file, sent) = (
+            dir.path().join("reports.jsonl"),
+            dir.path().join("reports.sent"),
+        );
+        assert_eq!(unsent(&file, &sent).unwrap(), Vec::new(), "a missing file");
+
+        let reporter = Reporter::new(&file).max_reports(BATCH + 10);
+        for i in 0..BATCH + 1 {
+            reporter
+                .record(Report::new(&ui(), &format!("Failure{i}"), "", "1.2.3"))
+                .unwrap();
+        }
+        let batches = unsent(&file, &sent).unwrap();
+        assert_eq!(batches.len(), 2);
+        assert_eq!(batches[0].reports.len(), BATCH);
+        assert_eq!(batches[1].reports[0].kind, format!("Failure{BATCH}"));
+        let len = std::fs::metadata(&file).unwrap().len() as usize;
+        assert!(batches[0].end < len);
+        assert_eq!(batches[1].end, len);
+
+        // The first batch handled, the second not: only the second is read again.
+        mark_sent(&sent, batches[0].end).unwrap();
+        let again = unsent(&file, &sent).unwrap();
+        assert_eq!(again, batches[1..].to_vec());
+        mark_sent(&sent, again[0].end).unwrap();
+        assert_eq!(unsent(&file, &sent).unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn unsent_passes_over_lines_that_are_not_reports_and_leaves_a_line_still_being_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let (file, sent) = (
+            dir.path().join("reports.jsonl"),
+            dir.path().join("reports.sent"),
+        );
+        let report = serde_json::to_string(&Report::new(&ui(), "RangeError", "", "1.2.3")).unwrap();
+        std::fs::write(&file, format!("not a report\n{report}\n{{\"layer\":\"ui\"")).unwrap();
+        let batches = unsent(&file, &sent).unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].reports.len(), 1);
+        assert_eq!(batches[0].end, "not a report\n".len() + report.len() + 1);
+
+        // A stretch of nothing but other lines is still a batch, so it can be recorded as sent.
+        std::fs::write(&file, "not a report\n").unwrap();
+        std::fs::remove_file(&sent).unwrap_or_default();
+        let batches = unsent(&file, &sent).unwrap();
+        assert_eq!(batches.len(), 1);
+        assert!(batches[0].reports.is_empty());
+    }
+
+    #[test]
+    fn a_file_shorter_than_what_was_sent_is_read_from_its_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let (file, sent) = (
+            dir.path().join("reports.jsonl"),
+            dir.path().join("reports.sent"),
+        );
+        mark_sent(&sent, 999_999).unwrap();
+        Reporter::new(&file)
+            .record(Report::new(&ui(), "TypeError", "", "1.2.3"))
+            .unwrap();
+        assert_eq!(unsent(&file, &sent).unwrap()[0].reports.len(), 1);
     }
 }

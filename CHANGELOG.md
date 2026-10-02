@@ -16,6 +16,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   (server-sent events). `LoopbackOptions::stdout` keeps the sidecar's stdout in a file, the
   readiness line included. `Loopback::into_parts()` hands over the process and the client apart, for an app
   that keeps them in different places.
+- `tauri-kit-diagnostics`: sending with an HTTP client of the app's own. `Sink` — `parse`,
+  `envelope` and the new `Sink::retry_later(status)` — is there without either sending feature, and
+  `unsent(file, sent)` reads what a report file gained since the last send, in the `Batch`es one
+  request takes, each with the `end` offset to record with `mark_sent(sent, end)` once it is
+  handled. `Sink::send_pending` is now these three over `ureq`, and behaves as before. An app that
+  already has an HTTP stack, or sends from its web view, no longer needs a second one to report.
 - `tauri-kit-diagnostics`: an `appinsights-rustls` feature — the same `Sink`, with rustls doing the
   TLS handshake against the OS's certificate store (rustls-platform-verifier) and the system proxy
   as before. `appinsights` hands TLS to the OS's own stack, which is OpenSSL on Linux, so its lock

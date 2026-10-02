@@ -4,83 +4,9 @@
 use std::io;
 use std::path::Path;
 
-use crate::queue::read_offset;
-use crate::Report;
-
-/// How many reports go out in one request.
-const BATCH: usize = 100;
-
-/// Where reports go: an Application Insights resource, named by its connection string.
-///
-/// ```no_run
-/// use std::path::Path;
-/// use tauri_kit_diagnostics::Sink;
-///
-/// // The connection string is usually baked in at build time; a build without one sends nothing.
-/// if let Some(sink) = option_env!("MY_APP_APPINSIGHTS_CONNECTION_STRING").and_then(Sink::parse) {
-///     let dir = Path::new("/path/to/logs");
-///     let (file, sent) = (dir.join("reports.jsonl"), dir.join("reports.sent"));
-///     // Off the startup path: what fails to go out now stays for the next launch.
-///     std::thread::spawn(move || sink.send_pending(&Sink::agent(), &file, &sent));
-/// }
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Sink {
-    /// The resource's instrumentation key.
-    pub instrumentation_key: String,
-    /// The ingestion endpoint's track URL.
-    pub track_url: String,
-}
+use crate::{mark_sent, unsent, Sink};
 
 impl Sink {
-    /// The sink a connection string names, if it names one: it needs an `InstrumentationKey` and
-    /// an `https://` `IngestionEndpoint`.
-    pub fn parse(connection_string: &str) -> Option<Self> {
-        let field = |name: &str| {
-            connection_string
-                .split(';')
-                .find_map(|part| part.trim().strip_prefix(name)?.strip_prefix('='))
-                .filter(|value| !value.is_empty())
-        };
-        let key = field("InstrumentationKey")?;
-        let endpoint = field("IngestionEndpoint").filter(|e| e.starts_with("https://"))?;
-        Some(Sink {
-            instrumentation_key: key.to_string(),
-            track_url: format!("{}/v2.1/track", endpoint.trim_end_matches('/')),
-        })
-    }
-
-    /// A report as Application Insights takes it: one exception telemetry item, whose type and
-    /// message are both the report's kind, whose stack is the report's frames, whose properties
-    /// are the report's details, and whose cloud role is the report's layer. It adds nothing that
-    /// is not in the report.
-    pub fn envelope(&self, report: &Report) -> serde_json::Value {
-        serde_json::json!({
-            "name": "Microsoft.ApplicationInsights.Exception",
-            "time": report.time,
-            "iKey": self.instrumentation_key,
-            "tags": {
-                "ai.cloud.role": report.layer,
-                "ai.application.ver": report.version,
-                "ai.device.osVersion": format!("{} {}", report.os, report.arch),
-            },
-            "data": {
-                "baseType": "ExceptionData",
-                "baseData": {
-                    "ver": 2,
-                    "exceptions": [{
-                        "typeName": report.kind,
-                        "message": report.kind,
-                        "hasFullStack": false,
-                        "stack": report.frames.join("\n"),
-                    }],
-                    "severityLevel": 3,
-                    "properties": report.details,
-                },
-            },
-        })
-    }
-
     /// An agent for the ingestion endpoint: the OS's certificate store and the proxy the PC is set
     /// up with — an office network that inspects TLS has its own root in that store. The handshake
     /// is the OS's own TLS with the `appinsights` feature, rustls with `appinsights-rustls` alone.
@@ -106,45 +32,24 @@ impl Sink {
     /// Sends the reports `file` has gained since the last send, and records in `sent` how far
     /// into `file` has been sent.
     ///
-    /// Reports go out in batches of up to 100, and `sent` is written after each batch. A line
-    /// that is not a report is passed over, and a last line without its newline (one still being
-    /// written) is left for later. A `file` shorter than what `sent` records is a new file and is
-    /// sent from its start; a missing `file` is nothing to send. Stops with an error at the first
-    /// request that fails for a reason that may pass — the network, or the endpoint answering
-    /// 408, 429 or 5xx — and leaves the rest for the next call. Any other answer counts as
-    /// handled: what was not taken then never will be, and is not sent again. Returns how many
-    /// reports the endpoint took.
+    /// Reports go out in the batches [`unsent`](crate::unsent) reads, and `sent` is written after
+    /// each batch. Stops with an error at the first request that fails for a reason that may pass —
+    /// the network, or an answer [`Sink::retry_later`] names — and leaves the rest for the next
+    /// call. Any other answer counts as handled: what was not taken then never will be, and is not
+    /// sent again. Returns how many reports the endpoint took.
     ///
     /// `agent` should hand HTTP error statuses back as answers (`http_status_as_error(false)`), as
     /// [`Sink::agent`] does; an agent that turns them into errors makes every refusal a reason to
     /// try again later.
     pub fn send_pending(&self, agent: &ureq::Agent, file: &Path, sent: &Path) -> io::Result<usize> {
-        use std::io::{Read, Seek};
-        let mut pending = match std::fs::File::open(file) {
-            Ok(f) => f,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(0),
-            Err(e) => return Err(e),
-        };
-        let len = usize::try_from(pending.metadata()?.len()).map_err(io::Error::other)?;
-        // A file shorter than what was sent is a new file: the old one was deleted.
-        let mut offset = read_offset(sent)
-            .filter(|&offset| offset <= len)
-            .unwrap_or(0);
-        // Only what follows what was sent is read: the file only grows between trims.
-        pending.seek(io::SeekFrom::Start(offset as u64))?;
-        let mut bytes = Vec::new();
-        pending.read_to_end(&mut bytes)?;
-        // Only whole lines: a launch may still be writing the last one.
-        let end = bytes.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
-        let lines: Vec<&[u8]> = bytes[..end].split_inclusive(|&b| b == b'\n').collect();
         let mut count = 0;
-        for batch in lines.chunks(BATCH) {
-            let reports: Vec<Report> = batch
-                .iter()
-                .filter_map(|line| serde_json::from_slice(line).ok())
-                .collect();
-            if !reports.is_empty() {
-                let items: Vec<_> = reports.iter().map(|report| self.envelope(report)).collect();
+        for batch in unsent(file, sent)? {
+            if !batch.reports.is_empty() {
+                let items: Vec<_> = batch
+                    .reports
+                    .iter()
+                    .map(|report| self.envelope(report))
+                    .collect();
                 let body = serde_json::to_vec(&items).map_err(io::Error::other)?;
                 let status = agent
                     .post(&self.track_url)
@@ -153,17 +58,14 @@ impl Sink {
                     .map_err(io::Error::other)?
                     .status()
                     .as_u16();
-                // Busy, throttled or down: the same reports may be taken later.
-                if matches!(status, 408 | 429) || status >= 500 {
+                if Sink::retry_later(status) {
                     return Err(io::Error::other(format!("the endpoint answered {status}")));
                 }
-                // Anything else was taken, or will never be: either way it is not sent again.
                 if (200..300).contains(&status) {
-                    count += reports.len();
+                    count += batch.reports.len();
                 }
             }
-            offset += batch.iter().map(|line| line.len()).sum::<usize>();
-            std::fs::write(sent, offset.to_string())?;
+            mark_sent(sent, batch.end)?;
         }
         Ok(count)
     }
@@ -172,88 +74,11 @@ impl Sink {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FrameRule, Layer, Reporter};
+    use crate::queue::BATCH;
+    use crate::{FrameRule, Layer, Report, Reporter};
 
     fn ui() -> Layer {
         Layer::new("ui", FrameRule::web_bundle())
-    }
-
-    #[test]
-    fn reads_the_sink_from_a_connection_string() {
-        let sink = Sink::parse(
-            "InstrumentationKey=00000000-1111-2222-3333-444444444444;IngestionEndpoint=https://westeurope-5.in.applicationinsights.azure.com/;LiveEndpoint=https://live/;ApplicationId=x",
-        )
-        .unwrap();
-        assert_eq!(
-            sink.instrumentation_key,
-            "00000000-1111-2222-3333-444444444444"
-        );
-        assert_eq!(
-            sink.track_url,
-            "https://westeurope-5.in.applicationinsights.azure.com/v2.1/track"
-        );
-    }
-
-    #[test]
-    fn a_connection_string_without_a_key_or_an_https_endpoint_names_no_sink() {
-        assert_eq!(Sink::parse(""), None);
-        assert_eq!(Sink::parse("IngestionEndpoint=https://x/"), None);
-        assert_eq!(
-            Sink::parse("InstrumentationKey=k;IngestionEndpoint=http://x/"),
-            None
-        );
-        assert_eq!(
-            Sink::parse("InstrumentationKey=;IngestionEndpoint=https://x/"),
-            None
-        );
-    }
-
-    #[test]
-    fn a_report_goes_out_as_one_exception_item() {
-        let sink = Sink {
-            instrumentation_key: "k".into(),
-            track_url: "https://x/v2.1/track".into(),
-        };
-        let mut report = Report::new(
-            &ui(),
-            "TypeError",
-            "at save (http://tauri.localhost/assets/index-a.js:1:2)",
-            "1.2.3",
-        );
-        report.time = "2026-09-29T09:26:31Z".into();
-        let item = sink.envelope(&report);
-        assert_eq!(item["name"], "Microsoft.ApplicationInsights.Exception");
-        assert_eq!(item["time"], "2026-09-29T09:26:31Z");
-        assert_eq!(item["iKey"], "k");
-        assert_eq!(item["tags"]["ai.cloud.role"], "ui");
-        assert_eq!(item["tags"]["ai.application.ver"], "1.2.3");
-        assert_eq!(item["data"]["baseType"], "ExceptionData");
-        let exception = &item["data"]["baseData"]["exceptions"][0];
-        assert_eq!(exception["typeName"], "TypeError");
-        assert_eq!(exception["message"], "TypeError");
-        assert_eq!(exception["stack"], "save index-a.js:1:2");
-        // Still nothing but the report: the envelope adds no field that could carry content.
-        assert!(item.to_string().is_ascii());
-        assert_eq!(
-            item["data"]["baseData"]["properties"],
-            serde_json::json!({})
-        );
-    }
-
-    #[test]
-    fn a_reports_details_go_out_as_its_properties() {
-        let sink = Sink {
-            instrumentation_key: "k".into(),
-            track_url: "https://x/v2.1/track".into(),
-        };
-        let report = Report::new(&ui(), "EngineFailed", "", "1.2.3")
-            .detail("status", "500")
-            .detail("code", "engine");
-        let item = sink.envelope(&report);
-        assert_eq!(
-            item["data"]["baseData"]["properties"],
-            serde_json::json!({ "code": "engine", "status": "500" })
-        );
     }
 
     /// A loopback endpoint that answers each request with the next of `statuses`, and hands back
