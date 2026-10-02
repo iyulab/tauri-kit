@@ -1437,7 +1437,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-kit-credentials"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "apple-native-keyring-store",
  "keyring-core",
@@ -1447,7 +1447,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-kit-diagnostics"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1458,7 +1458,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-kit-fs"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "dunce",
  "libc",
@@ -1468,7 +1468,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-kit-sidecar"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "getrandom 0.3.4",
  "libc",
@@ -1480,7 +1480,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-kit-state"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "tauri-kit-fs",
  "tempfile",
@@ -1488,7 +1488,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-kit-watch"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "notify",
  "tauri-kit-fs",
@@ -1497,7 +1497,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-kit-webview"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "tempfile",
  "webview2-com",

@@ -10,7 +10,7 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <!-- The package shares the crates' version: the Rust and .NET halves of one arrangement are
          released together. A test checks this against the workspace Cargo.toml. -->
-    <Version>0.10.0</Version>
+    <Version>0.11.0</Version>
     <Authors>iyulab</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/iyulab/tauri-kit</PackageProjectUrl>
