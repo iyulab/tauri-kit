@@ -12,7 +12,7 @@ categories = ["development-tools::debugging"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tauri-kit-fs = { path = "../fs", version = "0.11.0" }
+tauri-kit-fs = { path = "../fs", version = "0.12.0" }
 # HTTPS with the OS's certificate store and the proxy the PC is set up with. Which TLS stack does
 # the handshake is the feature's choice (below).
 ureq = { version = "3", default-features = false, features = ["win-system-proxy"], optional = true }
