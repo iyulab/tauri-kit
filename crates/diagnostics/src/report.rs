@@ -588,6 +588,7 @@ mod tests {
             ),
             (
                 "Error",
+                // public-text: allow — home folders the report is to strip
                 "at read (/home/someone/notes/a.md:3:9)\n    at x (/Users/someone/Documents/b.md:1:1)",
             ),
             (
