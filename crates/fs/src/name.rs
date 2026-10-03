@@ -14,10 +14,15 @@ use std::path::{Path, PathBuf};
 
 /// How a name is numbered when it is taken.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NameKind {
+pub enum NameKind<'a> {
     /// The number goes before the last extension: `notes.md` → `notes (1).md`. A name that starts
     /// with its only dot (`.profile`) has no extension: `.profile (1)`.
     File,
+    /// The number goes before this ending, for files whose kind is told by more than their last
+    /// extension: `notes.fd.md` with `.fd.md` → `notes (1).fd.md`, where `File` would give
+    /// `notes.fd (1).md` — a name the app no longer reads as its kind. A name that does not end with
+    /// it, or is nothing but it, is numbered as `File`.
+    Suffix(&'a str),
     /// The number goes at the end, dots and all: `2026.archive` → `2026.archive (1)`.
     Folder,
 }
@@ -49,13 +54,16 @@ pub fn is_taken(path: &Path) -> bool {
 /// assert_eq!(free_path(dir.path(), "notes.md", NameKind::File), dir.path().join("notes (1).md"));
 /// # Ok::<(), std::io::Error>(())
 /// ```
-pub fn free_path(dir: &Path, name: &str, kind: NameKind) -> PathBuf {
+pub fn free_path(dir: &Path, name: &str, kind: NameKind<'_>) -> PathBuf {
     let first = dir.join(name);
     if !is_taken(&first) {
         return first;
     }
     let (stem, ext) = match kind {
-        NameKind::File => split_extension(name),
+        NameKind::Suffix(suffix) if name.len() > suffix.len() && name.ends_with(suffix) => {
+            name.split_at(name.len() - suffix.len())
+        }
+        NameKind::File | NameKind::Suffix(_) => split_extension(name),
         NameKind::Folder => (name, ""),
     };
     (1u64..)
@@ -87,7 +95,7 @@ pub fn free_path(dir: &Path, name: &str, kind: NameKind) -> PathBuf {
 pub fn claim_free_path<T>(
     dir: &Path,
     name: &str,
-    kind: NameKind,
+    kind: NameKind<'_>,
     mut create: impl FnMut(&Path) -> io::Result<T>,
 ) -> io::Result<(PathBuf, T)> {
     let mut refused = 0;
@@ -125,6 +133,32 @@ mod tests {
         assert_eq!(
             free_path(dir.path(), "a.draft.md", NameKind::File),
             dir.path().join("a.draft (2).md")
+        );
+    }
+
+    #[test]
+    fn a_file_is_numbered_before_the_suffix_its_kind_is_told_by() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("New form.fd.md"), "").unwrap();
+        fs::write(dir.path().join("New form (1).fd.md"), "").unwrap();
+        assert_eq!(
+            free_path(dir.path(), "New form.fd.md", NameKind::Suffix(".fd.md")),
+            dir.path().join("New form (2).fd.md")
+        );
+    }
+
+    #[test]
+    fn a_name_without_the_suffix_is_numbered_as_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("notes.md"), "").unwrap();
+        fs::write(dir.path().join(".fd.md"), "").unwrap();
+        assert_eq!(
+            free_path(dir.path(), "notes.md", NameKind::Suffix(".fd.md")),
+            dir.path().join("notes (1).md")
+        );
+        assert_eq!(
+            free_path(dir.path(), ".fd.md", NameKind::Suffix(".fd.md")),
+            dir.path().join(".fd (1).md")
         );
     }
 

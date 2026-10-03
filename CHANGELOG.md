@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- `tauri-kit-fs`: `NameKind::Suffix(ending)` numbers a name before an ending of more than one
+  extension — `notes.fd.md` with `.fd.md` → `notes (1).fd.md` — for files whose kind an app tells by
+  that whole ending. `NameKind::File` numbers before the last extension only, which gave
+  `notes.fd (1).md`, a name the app no longer reads as its kind. `NameKind` now has a lifetime;
+  a `match` over it needs the new arm.
+
 ## [0.11.0] - 2026-10-02
 
 ### Added
