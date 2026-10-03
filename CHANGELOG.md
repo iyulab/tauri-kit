@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Changed
+
+- `tauri-kit-sidecar`: the `loopback` feature draws its secret with `getrandom` 0.4 (was 0.3). On
+  Windows, 0.4.2 checks the result of the system random generator it calls in every build; 0.3
+  checked it only in debug builds.
+
 ## [0.12.0] - 2026-10-03
 
 ### Added
