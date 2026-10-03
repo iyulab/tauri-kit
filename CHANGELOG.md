@@ -15,6 +15,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   `notes.fd (1).md`, a name the app no longer reads as its kind. `NameKind` now has a lifetime;
   a `match` over it needs the new arm.
 
+### Documentation
+
+- `tauri-kit-sidecar`: stop the sidecar in the updater's `on_before_exit` hook — on Windows the
+  installer replaces the sidecar's program while the app is still running, before the job object
+  ends the sidecar with it.
+
 ## [0.11.0] - 2026-10-02
 
 ### Added

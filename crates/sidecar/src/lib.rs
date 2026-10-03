@@ -35,6 +35,12 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! **Before an update installs, stop the sidecar yourself.** On Windows the installer replaces the
+//! sidecar's program, which the running sidecar holds open, and it starts before the app has
+//! exited — so the job object, which ends the sidecar only once the app is gone, is too late. With
+//! Tauri's updater plugin that is one call in the hook it runs just before the installer:
+//! `app.updater_builder().on_before_exit(move || { /* sidecar.shutdown(…) on the app's own state */ })`.
 
 #[cfg(feature = "loopback")]
 pub mod loopback;
