@@ -7,6 +7,23 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- `tauri-kit-diagnostics`: sessions. A `Session` appends to a JSON Lines file when the app starts,
+  when it ends as it should (its length and the time on each screen), and, on the next start, for a
+  session that did not end — told by a marker file the running session keeps. Every field comes
+  from an allowlist: a random `InstallId` made on the device from the OS random generator (never
+  from the hardware), a random session id, the version, the platform, the time, the interface's
+  language tag, a plain-identifier name of the app's own for its edition, and time on the app's
+  `Screens`, a fixed list of names — any other name is recorded as `Unrecognized`, whole. A line
+  read back that breaks a rule is not a session event. `Sink::session_items` makes event items
+  (`SessionStart`, `SessionEnd`, `SessionUnfinished`) and one page view per screen, tagged with
+  the installation as `ai.user.id` and the session as `ai.session.id`.
+- `tauri-kit-diagnostics`: one send path for every kind of line. `Telemetry` (implemented by
+  `Report` and `SessionEvent`) says what items a line becomes; `pending::<T>` reads what a file of
+  `T` gained since the last send, and `Sink::send_pending_of::<T>` sends it. `unsent`, `Batch` and
+  `Sink::send_pending` are the same for reports, unchanged.
+
 ### Changed
 
 - `tauri-kit-sidecar`: the `loopback` feature draws its secret with `getrandom` 0.4 (was 0.3). On

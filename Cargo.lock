@@ -1431,6 +1431,7 @@ dependencies = [
 name = "tauri-kit-diagnostics"
 version = "0.12.0"
 dependencies = [
+ "getrandom 0.4.3",
  "serde",
  "serde_json",
  "tauri-kit-fs",

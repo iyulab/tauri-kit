@@ -52,6 +52,19 @@
 //! # Ok::<(), std::io::Error>(())
 //! ```
 //!
+//! # Sessions
+//!
+//! The same file-then-send path carries when the app starts and ends and which of its screens it
+//! spent time on — never what a screen showed or who the person is. A [`Session`] appends a
+//! [`SessionEvent`] when it starts, when it ends as it should, and, on the next start, for a
+//! session that did not end (a crash, a lost machine). Its fields are an allowlist too: a random
+//! [`InstallId`] made on the device (never from its hardware), a random session id, the version,
+//! the platform, the time, the interface's language, the app's own name for its edition, and time
+//! on each of the app's [`Screens`] — a name not among them is recorded as [`UNRECOGNIZED_KIND`],
+//! whole. [`Sink::session_items`] makes Application Insights users, sessions and page views of
+//! them, and [`Sink`] sends a sessions file as it sends a reports file ([`Telemetry`], [`pending`]).
+//! Whether an app may send them, and what it tells the person, is the app's to decide.
+//!
 //! # Features
 //!
 //! - `appinsights` (off by default): `Sink::send_pending`, which sends queued reports to Application Insights
@@ -65,18 +78,23 @@
 
 mod queue;
 mod report;
+mod session;
 mod sink;
 
 #[cfg(any(feature = "appinsights", feature = "appinsights-rustls"))]
 mod appinsights;
 
 pub use queue::{
-    mark_sent, trim, unsent, Batch, Reporter, CAPPED_KIND, MAX_FILE_BYTES, MAX_REPORTS,
+    mark_sent, pending, trim, unsent, Batch, Pending, Reporter, CAPPED_KIND, MAX_FILE_BYTES,
+    MAX_REPORTS,
 };
 pub use report::{
     FrameRule, Layer, Report, RustSource, WebBundle, MAX_DETAILS, MAX_FRAMES, UNRECOGNIZED_KIND,
 };
-pub use sink::Sink;
+pub use session::{
+    InstallId, ScreenTime, Screens, Session, SessionBuilder, SessionEvent, SessionKind, MAX_SCREENS,
+};
+pub use sink::{Sink, Telemetry};
 
 /// The HTTP client [`Sink`] sends with, so an app can build its own agent with the same version.
 #[cfg(any(feature = "appinsights", feature = "appinsights-rustls"))]

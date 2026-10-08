@@ -10,6 +10,8 @@ keywords = ["tauri", "error-reporting", "telemetry", "privacy", "desktop"]
 categories = ["development-tools::debugging"]
 
 [dependencies]
+# Session and installation identifiers: the OS random generator, never anything of the device.
+getrandom = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-kit-fs = { path = "../fs", version = "0.12.0" }

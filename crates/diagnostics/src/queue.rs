@@ -5,6 +5,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+
 use crate::Report;
 
 /// A launch that fails this often is failing the same way; more reports would say nothing new.
@@ -90,18 +93,23 @@ impl Reporter {
     }
 
     fn append(&self, report: &Report) -> io::Result<()> {
-        use std::io::Write;
-        if let Some(dir) = self.file.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let mut line = serde_json::to_string(report).map_err(io::Error::other)?;
-        line.push('\n');
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.file)?
-            .write_all(line.as_bytes())
+        append_line(&self.file, report)
     }
+}
+
+/// Appends `item` to `file` as one JSON line, creating the file and its folders when needed.
+pub(crate) fn append_line<T: Serialize>(file: &Path, item: &T) -> io::Result<()> {
+    use std::io::Write;
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut line = serde_json::to_string(item).map_err(io::Error::other)?;
+    line.push('\n');
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(file)?
+        .write_all(line.as_bytes())
 }
 
 /// Keeps a report file from growing without end.
@@ -150,12 +158,35 @@ pub struct Batch {
 /// For an app that sends with an HTTP client of its own — with the `appinsights` feature,
 /// `Sink::send_pending` does all of it. Send the batches in order and record each one with
 /// [`mark_sent`] once it is handled; stop at the first that is not, so it and those after it are
-/// read again next time.
+/// read again next time. It is [`pending`] for a file of [`Report`]s.
 ///
 /// Only whole lines are read: a last line without its newline (one still being written) is left
 /// for later, and a line that is not a report is passed over. A `file` shorter than what `sent`
 /// records is a new file and is read from its start; a missing `file` has nothing unsent.
 pub fn unsent(file: &Path, sent: &Path) -> io::Result<Vec<Batch>> {
+    Ok(pending::<Report>(file, sent)?
+        .into_iter()
+        .map(|p| Batch {
+            reports: p.items,
+            end: p.end,
+        })
+        .collect())
+}
+
+/// Lines of a file that have not been sent, read as `T`, as they go out in one request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pending<T> {
+    /// The lines that read as `T`, in the order they were written — at most 100. Empty when no
+    /// line of the stretch did; such a stretch is still recorded as sent.
+    pub items: Vec<T>,
+    /// How far into the file this stretch reaches, in bytes: what to record with [`mark_sent`]
+    /// once it is handled.
+    pub end: usize,
+}
+
+/// What a file of `T` lines — reports, session events — has gained since the offset `sent`
+/// records, in the stretches it goes out in. [`unsent`] is this for reports; read it the same way.
+pub fn pending<T: DeserializeOwned>(file: &Path, sent: &Path) -> io::Result<Vec<Pending<T>>> {
     use std::io::{Read, Seek};
     let mut pending = match std::fs::File::open(file) {
         Ok(f) => f,
@@ -178,8 +209,8 @@ pub fn unsent(file: &Path, sent: &Path) -> io::Result<Vec<Batch>> {
         .chunks(BATCH)
         .map(|batch| {
             offset += batch.iter().map(|line| line.len()).sum::<usize>();
-            Batch {
-                reports: batch
+            Pending {
+                items: batch
                     .iter()
                     .filter_map(|line| serde_json::from_slice(line).ok())
                     .collect(),

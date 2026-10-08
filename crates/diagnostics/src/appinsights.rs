@@ -4,7 +4,7 @@
 use std::io;
 use std::path::Path;
 
-use crate::{mark_sent, unsent, Sink};
+use crate::{mark_sent, pending, Report, Sink, Telemetry};
 
 impl Sink {
     /// An agent for the ingestion endpoint: the OS's certificate store and the proxy the PC is set
@@ -30,25 +30,39 @@ impl Sink {
     }
 
     /// Sends the reports `file` has gained since the last send, and records in `sent` how far
-    /// into `file` has been sent.
+    /// into `file` has been sent — [`Sink::send_pending_of`] for a file of [`Report`]s.
     ///
-    /// Reports go out in the batches [`unsent`](crate::unsent) reads, and `sent` is written after
-    /// each batch. Stops with an error at the first request that fails for a reason that may pass —
-    /// the network, or an answer [`Sink::retry_later`] names — and leaves the rest for the next
-    /// call. Any other answer counts as handled: what was not taken then never will be, and is not
-    /// sent again. Returns how many reports the endpoint took.
+    /// Returns how many reports the endpoint took.
+    pub fn send_pending(&self, agent: &ureq::Agent, file: &Path, sent: &Path) -> io::Result<usize> {
+        self.send_pending_of::<Report>(agent, file, sent)
+    }
+
+    /// Sends the lines a file of `T` — reports, [`SessionEvent`](crate::SessionEvent)s — has
+    /// gained since the last send, and records in `sent` how far into `file` has been sent.
+    ///
+    /// Lines go out in the stretches [`pending`](crate::pending) reads, each line as the items
+    /// [`Telemetry::items`] makes of it, and `sent` is written after each stretch. Stops with an
+    /// error at the first request that fails for a reason that may pass — the network, or an
+    /// answer [`Sink::retry_later`] names — and leaves the rest for the next call. Any other answer
+    /// counts as handled: what was not taken then never will be, and is not sent again. Returns how
+    /// many lines the endpoint took.
     ///
     /// `agent` should hand HTTP error statuses back as answers (`http_status_as_error(false)`), as
     /// [`Sink::agent`] does; an agent that turns them into errors makes every refusal a reason to
     /// try again later.
-    pub fn send_pending(&self, agent: &ureq::Agent, file: &Path, sent: &Path) -> io::Result<usize> {
+    pub fn send_pending_of<T: Telemetry>(
+        &self,
+        agent: &ureq::Agent,
+        file: &Path,
+        sent: &Path,
+    ) -> io::Result<usize> {
         let mut count = 0;
-        for batch in unsent(file, sent)? {
-            if !batch.reports.is_empty() {
-                let items: Vec<_> = batch
-                    .reports
+        for stretch in pending::<T>(file, sent)? {
+            if !stretch.items.is_empty() {
+                let items: Vec<_> = stretch
+                    .items
                     .iter()
-                    .map(|report| self.envelope(report))
+                    .flat_map(|line| line.items(self))
                     .collect();
                 let body = serde_json::to_vec(&items).map_err(io::Error::other)?;
                 let status = agent
@@ -62,10 +76,10 @@ impl Sink {
                     return Err(io::Error::other(format!("the endpoint answered {status}")));
                 }
                 if (200..300).contains(&status) {
-                    count += batch.reports.len();
+                    count += stretch.items.len();
                 }
             }
-            mark_sent(sent, batch.end)?;
+            mark_sent(sent, stretch.end)?;
         }
         Ok(count)
     }
@@ -75,7 +89,7 @@ impl Sink {
 mod tests {
     use super::*;
     use crate::queue::BATCH;
-    use crate::{FrameRule, Layer, Report, Reporter};
+    use crate::{FrameRule, Layer, Report, Reporter, SessionEvent};
 
     fn ui() -> Layer {
         Layer::new("ui", FrameRule::web_bundle())
@@ -269,6 +283,56 @@ mod tests {
         let (sink, server) = endpoint(vec![200]);
         assert_eq!(sink.send_pending(&loopback(), &file, &sent).unwrap(), 1);
         server.join().unwrap();
+    }
+
+    #[test]
+    fn sends_a_sessions_file_and_keeps_it_while_offline() {
+        use crate::{InstallId, Screens, Session};
+        let dir = tempfile::tempdir().unwrap();
+        let (file, sent) = (
+            dir.path().join("sessions.jsonl"),
+            dir.path().join("sessions.sent"),
+        );
+        let install = InstallId::load_or_create(&dir.path().join("install-id")).unwrap();
+        let session = Session::builder(&install, "1.2.3")
+            .screens(Screens::new(["home", "report"]))
+            .start(&file, dir.path().join("session.running"))
+            .unwrap();
+        session.screen(Some("home"));
+        session.screen(Some("report"));
+        session.end().unwrap();
+
+        // No network: nothing is lost.
+        let offline = Sink {
+            instrumentation_key: "k".into(),
+            track_url: "http://127.0.0.1:9/v2.1/track".into(),
+        };
+        assert!(offline
+            .send_pending_of::<SessionEvent>(&loopback(), &file, &sent)
+            .is_err());
+
+        let (sink, server) = endpoint(vec![200]);
+        assert_eq!(
+            sink.send_pending_of::<SessionEvent>(&loopback(), &file, &sent)
+                .unwrap(),
+            2,
+            "two lines: the start and the end"
+        );
+        let items = server.join().unwrap()[0].as_array().unwrap().clone();
+        let names: Vec<_> = items
+            .iter()
+            .map(|i| i["data"]["baseData"]["name"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(names, ["SessionStart", "SessionEnd", "home", "report"]);
+        assert!(items
+            .iter()
+            .all(|i| i["tags"]["ai.user.id"] == install.as_str()));
+        assert_eq!(
+            sink.send_pending_of::<SessionEvent>(&loopback(), &file, &sent)
+                .unwrap(),
+            0,
+            "nothing new"
+        );
     }
 
     #[test]

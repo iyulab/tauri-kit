@@ -426,7 +426,7 @@ pub(crate) fn utc(at: std::time::SystemTime) -> String {
 
 /// A type or class name, or an app-owned code — whole, or not at all: a kind that is not a plain
 /// identifier may be text from anywhere, and a part of it is still that text.
-fn plain_kind(raw: &str) -> String {
+pub(crate) fn plain_kind(raw: &str) -> String {
     let mut chars = raw.chars();
     let plain = raw.len() <= 100
         && chars.next().is_some_and(|c| c.is_ascii_alphabetic())

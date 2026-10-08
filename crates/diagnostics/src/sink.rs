@@ -1,6 +1,43 @@
 //! What goes out to Azure Application Insights, whichever HTTP client takes it there.
 
-use crate::Report;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+
+use crate::{Report, SessionEvent, SessionKind};
+
+/// A line of a file a [`Sink`] sends: a [`Report`] or a [`SessionEvent`].
+pub trait Telemetry: Serialize + DeserializeOwned {
+    /// The items Application Insights takes for this line.
+    fn items(&self, sink: &Sink) -> Vec<serde_json::Value>;
+}
+
+impl Telemetry for Report {
+    fn items(&self, sink: &Sink) -> Vec<serde_json::Value> {
+        vec![sink.envelope(self)]
+    }
+}
+
+impl Telemetry for SessionEvent {
+    fn items(&self, sink: &Sink) -> Vec<serde_json::Value> {
+        sink.session_items(self)
+    }
+}
+
+/// Whole seconds as Application Insights writes a time span: `[d.]hh:mm:ss.fff`.
+fn timespan(seconds: u64) -> String {
+    let (days, rest) = (seconds / 86_400, seconds % 86_400);
+    let clock = format!(
+        "{:02}:{:02}:{:02}.000",
+        rest / 3_600,
+        rest % 3_600 / 60,
+        rest % 60
+    );
+    if days > 0 {
+        format!("{days}.{clock}")
+    } else {
+        clock
+    }
+}
 
 /// Where reports go: an Application Insights resource, named by its connection string.
 ///
@@ -88,6 +125,80 @@ impl Sink {
                 },
             },
         })
+    }
+
+    /// A session event as Application Insights takes it, adding nothing that is not in the event.
+    ///
+    /// Every item is tagged with the installation as the user (`ai.user.id`), the session
+    /// (`ai.session.id`), the app's version and the platform, so the resource's users, sessions
+    /// and page views read them. A start or an unfinished session is one event telemetry item
+    /// (`SessionStart` with the language and track as properties, `SessionUnfinished` with when it
+    /// started); an end is one event item (`SessionEnd` with its length in seconds as a
+    /// measurement) and one page view item for each screen, whose duration is the time on it and
+    /// whose `opened` measurement is how many times it was opened.
+    pub fn session_items(&self, event: &SessionEvent) -> Vec<serde_json::Value> {
+        let (os, arch) = event.platform();
+        let mut tags = serde_json::json!({
+            "ai.user.id": event.install(),
+            "ai.session.id": event.session(),
+            "ai.application.ver": event.version(),
+            "ai.device.osVersion": format!("{os} {arch}"),
+        });
+        if let Some(locale) = event.locale() {
+            tags["ai.device.locale"] = locale.into();
+        }
+        let item = |name: &str, base_type: &str, base: serde_json::Value| {
+            serde_json::json!({
+                "name": name,
+                "time": event.time(),
+                "iKey": self.instrumentation_key,
+                "tags": tags,
+                "data": { "baseType": base_type, "baseData": base },
+            })
+        };
+        let custom =
+            |name: &str, properties: serde_json::Value, measurements: serde_json::Value| {
+                item(
+                    "Microsoft.ApplicationInsights.Event",
+                    "EventData",
+                    serde_json::json!({
+                        "ver": 2,
+                        "name": name,
+                        "properties": properties,
+                        "measurements": measurements,
+                    }),
+                )
+            };
+        match event.kind() {
+            SessionKind::Start => vec![custom(
+                "SessionStart",
+                serde_json::json!({ "locale": event.locale(), "track": event.track() }),
+                serde_json::json!({}),
+            )],
+            SessionKind::Unfinished => vec![custom(
+                "SessionUnfinished",
+                serde_json::json!({ "started": event.started() }),
+                serde_json::json!({}),
+            )],
+            SessionKind::End => std::iter::once(custom(
+                "SessionEnd",
+                serde_json::json!({}),
+                serde_json::json!({ "seconds": event.seconds().unwrap_or(0) }),
+            ))
+            .chain(event.screens().iter().map(|(name, time)| {
+                item(
+                    "Microsoft.ApplicationInsights.PageView",
+                    "PageViewData",
+                    serde_json::json!({
+                        "ver": 2,
+                        "name": name,
+                        "duration": timespan(time.seconds),
+                        "measurements": { "opened": time.opened },
+                    }),
+                )
+            }))
+            .collect(),
+        }
     }
 
     /// Whether an answer from the ingestion endpoint means the same reports may be taken later:
@@ -183,6 +294,104 @@ mod tests {
             item["data"]["baseData"]["properties"],
             serde_json::json!({ "code": "engine", "status": "500" })
         );
+    }
+
+    fn session_event(line: serde_json::Value) -> SessionEvent {
+        let mut base = serde_json::json!({
+            "install": "0123456789abcdef0123456789abcdef",
+            "session": "fedcba9876543210fedcba9876543210",
+            "version": "1.2.3",
+            "os": "windows",
+            "arch": "x86_64",
+            "time": "2026-10-08T09:00:00Z",
+        });
+        base.as_object_mut()
+            .unwrap()
+            .extend(line.as_object().unwrap().clone());
+        serde_json::from_value(base).unwrap()
+    }
+
+    fn sink() -> Sink {
+        Sink {
+            instrumentation_key: "k".into(),
+            track_url: "https://x/v2.1/track".into(),
+        }
+    }
+
+    #[test]
+    fn a_session_start_goes_out_as_one_event_of_its_user_and_session() {
+        let start = session_event(serde_json::json!({
+            "event": "start", "locale": "ko-KR", "track": "school",
+        }));
+        let items = sink().session_items(&start);
+        assert_eq!(items.len(), 1);
+        let item = &items[0];
+        assert_eq!(item["name"], "Microsoft.ApplicationInsights.Event");
+        assert_eq!(item["time"], "2026-10-08T09:00:00Z");
+        assert_eq!(
+            item["tags"]["ai.user.id"],
+            "0123456789abcdef0123456789abcdef"
+        );
+        assert_eq!(
+            item["tags"]["ai.session.id"],
+            "fedcba9876543210fedcba9876543210"
+        );
+        assert_eq!(item["tags"]["ai.application.ver"], "1.2.3");
+        assert_eq!(item["tags"]["ai.device.osVersion"], "windows x86_64");
+        assert_eq!(item["tags"]["ai.device.locale"], "ko-KR");
+        assert_eq!(item["data"]["baseType"], "EventData");
+        assert_eq!(item["data"]["baseData"]["name"], "SessionStart");
+        assert_eq!(
+            item["data"]["baseData"]["properties"],
+            serde_json::json!({ "locale": "ko-KR", "track": "school" })
+        );
+    }
+
+    #[test]
+    fn a_session_end_goes_out_as_an_event_and_a_page_view_for_each_screen() {
+        let end = session_event(serde_json::json!({
+            "event": "end",
+            "seconds": 93_784,
+            "screens": {
+                "home": { "opened": 2, "seconds": 14 },
+                "report": { "opened": 1, "seconds": 93_770 },
+            },
+        }));
+        let items = sink().session_items(&end);
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0]["data"]["baseData"]["name"], "SessionEnd");
+        assert_eq!(
+            items[0]["data"]["baseData"]["measurements"],
+            serde_json::json!({ "seconds": 93_784 })
+        );
+        let home = &items[1];
+        assert_eq!(home["name"], "Microsoft.ApplicationInsights.PageView");
+        assert_eq!(
+            home["tags"]["ai.session.id"],
+            "fedcba9876543210fedcba9876543210"
+        );
+        assert_eq!(home["data"]["baseType"], "PageViewData");
+        assert_eq!(home["data"]["baseData"]["name"], "home");
+        assert_eq!(home["data"]["baseData"]["duration"], "00:00:14.000");
+        assert_eq!(home["data"]["baseData"]["measurements"]["opened"], 2);
+        assert_eq!(items[2]["data"]["baseData"]["duration"], "1.02:02:50.000");
+        // Nothing but the event: every value is one of its fields or a fixed name.
+        assert!(items.iter().all(|i| i.to_string().is_ascii()));
+    }
+
+    #[test]
+    fn an_unfinished_session_goes_out_as_one_event_with_when_it_started() {
+        let unfinished = session_event(serde_json::json!({
+            "event": "unfinished", "started": "2026-10-07T23:00:00Z",
+        }));
+        let items = sink().session_items(&unfinished);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["data"]["baseData"]["name"], "SessionUnfinished");
+        assert_eq!(
+            items[0]["data"]["baseData"]["properties"],
+            serde_json::json!({ "started": "2026-10-07T23:00:00Z" })
+        );
+        assert!(items[0]["tags"].get("ai.device.locale").is_none());
     }
 
     #[test]
