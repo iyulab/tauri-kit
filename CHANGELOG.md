@@ -7,6 +7,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-10-08
+
 ### Added
 
 - `tauri-kit-diagnostics`: sessions. A `Session` appends to a JSON Lines file when the app starts,
@@ -356,6 +358,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - `tauri-kit-sidecar`: bundled helper processes without a console window, stopped together with
   everything they start, with readiness waits that notice a crash.
 
+[0.12.1]: https://github.com/iyulab/tauri-kit/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/iyulab/tauri-kit/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/iyulab/tauri-kit/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/iyulab/tauri-kit/compare/v0.9.1...v0.10.0
