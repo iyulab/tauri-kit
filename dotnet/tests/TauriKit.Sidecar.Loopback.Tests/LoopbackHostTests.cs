@@ -118,6 +118,16 @@ public sealed class LoopbackHostStaticTests
     }
 
     [Fact]
+    public void A_readiness_line_may_say_more_after_its_port_one_word_each()
+    {
+        Assert.Equal("helper ready port=5101 previousPort=5100",
+            LoopbackHost.ReadyLine("helper ready port=", 5101, [new("previousPort", "5100")]));
+        Assert.Throws<ArgumentException>(() => LoopbackHost.ReadyLine("p=", 1, [new("a b", "1")]));
+        Assert.Throws<ArgumentException>(() => LoopbackHost.ReadyLine("p=", 1, [new("a", "")]));
+        Assert.Throws<ArgumentException>(() => LoopbackHost.ReadyLine("p=", 1, [new("a=b", "1")]));
+    }
+
+    [Fact]
     public async Task The_readiness_line_is_written_once_the_app_listens()
     {
         var app = LoopbackHost.CreateSlimBuilder([]).Build();

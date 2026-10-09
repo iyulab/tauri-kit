@@ -134,9 +134,24 @@ impl fmt::Debug for Endpoint {
     }
 }
 
-/// The port a readiness line announces: what follows `prefix`, as a port number.
+/// The port a readiness line announces: the word right after `prefix`, as a port number. A backend
+/// may say more after it, as `key=value` words (see [`ready_fields`]).
 pub fn ready_port(line: &str, prefix: &str) -> Option<u16> {
-    line.strip_prefix(prefix)?.trim().parse().ok()
+    line.strip_prefix(prefix)?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
+}
+
+/// What a readiness line says after its port: each `key=value` word, in order — for a backend that
+/// announces more than where it listens (the port it had to give up, say). Words without `=` are
+/// skipped. Empty when the line does not start with `prefix`.
+pub fn ready_fields<'a>(line: &'a str, prefix: &str) -> impl Iterator<Item = (&'a str, &'a str)> {
+    line.strip_prefix(prefix)
+        .into_iter()
+        .flat_map(|rest| rest.split_whitespace().skip(1))
+        .filter_map(|word| word.split_once('='))
 }
 
 /// How to start a loopback backend as the app's child.
@@ -398,6 +413,17 @@ mod tests {
         );
         assert_eq!(Fault::from_answer(503, ""), None);
         assert_eq!(Fault::from_answer(400, r#"{"error":"bad"}"#), None);
+    }
+
+    #[test]
+    fn a_readiness_line_may_say_more_after_its_port() {
+        let line = "helper ready port=5101 previousPort=5100 mode=fresh stray";
+        assert_eq!(ready_port(line, "helper ready port="), Some(5101));
+        assert_eq!(
+            ready_fields(line, "helper ready port=").collect::<Vec<_>>(),
+            [("previousPort", "5100"), ("mode", "fresh")]
+        );
+        assert_eq!(ready_fields("other line", "helper ready port=").count(), 0);
     }
 
     #[test]

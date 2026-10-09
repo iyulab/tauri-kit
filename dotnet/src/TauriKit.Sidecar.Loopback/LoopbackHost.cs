@@ -124,19 +124,39 @@ public static class LoopbackHost
         return new Uri(app.Urls.First()).Port;
     }
 
-    /// <summary>The readiness line for <paramref name="port"/>: the prefix, then the port.</summary>
-    public static string ReadyLine(string readyPrefix, int port) => readyPrefix + port.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    /// <summary>
+    /// The readiness line for <paramref name="port"/>: the prefix, then the port, then each of <paramref name="fields"/>
+    /// as a <c>key=value</c> word — what a backend says beyond where it listens (the port it had to give up, say). The
+    /// Rust side reads them with <c>ready_fields</c>.
+    /// </summary>
+    /// <exception cref="ArgumentException">A key or value is empty or holds white space, or a key holds <c>=</c>.</exception>
+    public static string ReadyLine(string readyPrefix, int port, IEnumerable<KeyValuePair<string, string>>? fields = null)
+    {
+        var line = new System.Text.StringBuilder(readyPrefix).Append(port.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        foreach (var (key, value) in fields ?? [])
+        {
+            if (!IsWord(key) || key.Contains('=', StringComparison.Ordinal) || !IsWord(value))
+                throw new ArgumentException($"A readiness field is one word each side of '=': '{key}'.", nameof(fields));
+            line.Append(' ').Append(key).Append('=').Append(value);
+        }
+
+        return line.ToString();
+
+        static bool IsWord(string text) => text.Length > 0 && !text.Any(char.IsWhiteSpace);
+    }
 
     /// <summary>
     /// Starts the application, writes the readiness line (to standard output unless
-    /// <paramref name="output"/> is given) once it listens, and runs until it is shut down.
+    /// <paramref name="output"/> is given) once it listens — with <paramref name="fields"/> after the port, see
+    /// <see cref="ReadyLine"/> — and runs until it is shut down.
     /// </summary>
-    public static async Task RunAnnouncingAsync(this WebApplication app, string readyPrefix, TextWriter? output = null)
+    public static async Task RunAnnouncingAsync(this WebApplication app, string readyPrefix, TextWriter? output = null, IEnumerable<KeyValuePair<string, string>>? fields = null)
     {
         ArgumentNullException.ThrowIfNull(app);
         await app.StartAsync().ConfigureAwait(false);
+        var line = ReadyLine(readyPrefix, app.Port(), fields);
         var writer = output ?? Console.Out;
-        await writer.WriteLineAsync(ReadyLine(readyPrefix, app.Port())).ConfigureAwait(false);
+        await writer.WriteLineAsync(line).ConfigureAwait(false);
         await writer.FlushAsync().ConfigureAwait(false);
         await app.WaitForShutdownAsync().ConfigureAwait(false);
     }

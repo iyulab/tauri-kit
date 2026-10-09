@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- Loopback readiness lines can say more after the port, as `key=value` words (the port the backend
+  had to give up, say). Rust: `ready_fields(line, prefix)` reads them, and `ready_port` now takes
+  the first word after the prefix, so it accepts such a line. .NET: `ReadyLine` and
+  `RunAnnouncingAsync` take `fields`, one word each side of `=`.
+
 ## [0.13.0] - 2026-10-09
 
 ### Added
