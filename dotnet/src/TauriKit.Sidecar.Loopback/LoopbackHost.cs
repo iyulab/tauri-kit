@@ -62,7 +62,8 @@ public static class LoopbackHost
     /// <c>127.0.0.1</c>, <c>localhost</c> or <c>[::1]</c> (and, with <paramref name="localhostSubdomains"/>, any name
     /// under <c>localhost</c>, which browsers resolve to this computer themselves). A web page whose own name was
     /// pointed at 127.0.0.1 (DNS rebinding) reaches the port but sends its own name, so this refuses it even on a route
-    /// open to anonymous callers. Add it before the routes.
+    /// open to anonymous callers. A refused name never reaches a route; authentication, which the application runs
+    /// first, may already have answered 401 to a request that carries no credential.
     /// </summary>
     public static IApplicationBuilder UseLoopbackHostCheck(this IApplicationBuilder app, bool localhostSubdomains = false)
     {
