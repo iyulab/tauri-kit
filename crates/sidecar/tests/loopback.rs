@@ -117,6 +117,14 @@ fn requests_carry_the_token_and_statuses_come_back_as_answers() {
 }
 
 #[test]
+fn the_whole_readiness_line_and_the_endpoint_are_kept() {
+    let helper = Loopback::start(helper("serve"), &options()).unwrap();
+    let port = helper.endpoint().port();
+    assert_eq!(helper.ready_line(), format!("{PREFIX}{port}"));
+    assert_eq!(helper.endpoint().base(), format!("http://127.0.0.1:{port}"));
+}
+
+#[test]
 fn the_parts_keep_working_apart() {
     let helper = Loopback::start(helper("serve"), &options()).unwrap();
     let (mut sidecar, endpoint) = helper.into_parts();

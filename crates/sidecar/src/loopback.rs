@@ -212,6 +212,7 @@ impl std::error::Error for StartError {
 pub struct Loopback {
     sidecar: Sidecar,
     endpoint: Endpoint,
+    ready_line: String,
     #[cfg(feature = "loopback-client")]
     client: Client,
 }
@@ -230,19 +231,21 @@ impl Loopback {
         )
         .map_err(StartError::Spawn)?;
         let prefix = options.ready_prefix.as_str();
-        let port = match sidecar
+        let (port, ready_line) = match sidecar
             .wait_line(options.ready_timeout, |line| line.starts_with(prefix))
             .map_err(StartError::Spawn)?
         {
-            LineReadiness::Line(line) => {
-                ready_port(&line, prefix).ok_or(StartError::BadReadyLine(line))?
-            }
+            LineReadiness::Line(line) => match ready_port(&line, prefix) {
+                Some(port) => (port, line),
+                None => return Err(StartError::BadReadyLine(line)),
+            },
             LineReadiness::Exited(status) => return Err(StartError::Exited(status)),
             LineReadiness::TimedOut => return Err(StartError::TimedOut(options.ready_timeout)),
         };
         let endpoint = Endpoint::new(port, token);
         Ok(Loopback {
             sidecar,
+            ready_line,
             #[cfg(feature = "loopback-client")]
             client: Client::new(&endpoint, &options.client),
             endpoint,
@@ -253,6 +256,12 @@ impl Loopback {
     /// HTTP client.
     pub fn endpoint(&self) -> &Endpoint {
         &self.endpoint
+    }
+
+    /// The whole readiness line the backend printed — for one that announces more than its port after
+    /// it, which the app reads itself.
+    pub fn ready_line(&self) -> &str {
+        &self.ready_line
     }
 
     /// A blocking client for the backend, carrying its token.

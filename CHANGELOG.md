@@ -14,7 +14,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - `tauri-kit-sidecar` (`loopback`): `Endpoint` is where a backend listens and the token it
   accepts, separate from any client. `base()` and `authorization()` serve an app that calls with
   its own HTTP client (async, say), and its `Debug` shows the port only. `Loopback::endpoint()`
-  returns it for a started backend.
+  returns it for a started backend, and `Loopback::ready_line()` the whole readiness line, for a
+  backend that announces more than its port.
 - `tauri-kit-sidecar` (`loopback`): `discover(path)` reads the discovery file a backend that lives
   on its own publishes (`DiscoveryFile.Publish` on the .NET side) into an `Endpoint`, or
   `DiscoveryError::{Missing, Unreadable, Stale}`. A file is stale when its process is gone; on
