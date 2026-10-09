@@ -2,17 +2,13 @@
 
   <PropertyGroup>
     <PackageId>TauriKit.Sidecar.Loopback</PackageId>
-    <Description>The .NET host side of a desktop app's loopback sidecar: listen on 127.0.0.1 only, announce the port the system picked, answer only requests carrying the per-run token, and report unexpected failures without their messages. Pairs with the tauri-kit-sidecar crate's loopback feature.</Description>
-    <PackageTags>tauri;sidecar;loopback;kestrel;desktop</PackageTags>
+    <Description>The framework-free half of a desktop app's loopback backend: the owner-only discovery file (publish, read, stale rule), the credentials a backend accepts and who holds each, the fault record, and a caller's HttpClient handler that finds the backend by its file. No ASP.NET Core — the host half is TauriKit.Sidecar.Loopback.AspNetCore. Pairs with the tauri-kit-sidecar crate's loopback feature.</Description>
+    <PackageTags>tauri;sidecar;loopback;desktop</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <!-- Sidecars are often published ahead-of-time compiled; the analyzers keep this library usable there. -->
     <IsAotCompatible>true</IsAotCompatible>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
-
-  <ItemGroup>
-    <FrameworkReference Include="Microsoft.AspNetCore.App" />
-  </ItemGroup>
 
   <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />

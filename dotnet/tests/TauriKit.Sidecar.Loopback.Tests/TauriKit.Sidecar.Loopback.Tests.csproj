@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\TauriKit.Sidecar.Loopback\TauriKit.Sidecar.Loopback.csproj" />
+    <ProjectReference Include="..\..\src\TauriKit.Sidecar.Loopback.AspNetCore\TauriKit.Sidecar.Loopback.AspNetCore.csproj" />
   </ItemGroup>
 
   <ItemGroup>

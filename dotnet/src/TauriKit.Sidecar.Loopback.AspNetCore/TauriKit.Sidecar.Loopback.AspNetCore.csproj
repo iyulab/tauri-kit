@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <PackageId>TauriKit.Sidecar.Loopback.AspNetCore</PackageId>
+    <Description>The ASP.NET Core host of a desktop app's loopback backend: listen on 127.0.0.1 only, announce the port the system picked or publish it in an owner-only discovery file, answer only registered callers (open routes by name), refuse non-loopback Host names, and report unexpected failures without their messages. Pairs with the tauri-kit-sidecar crate's loopback feature.</Description>
+    <PackageTags>tauri;sidecar;loopback;kestrel;aspnetcore;desktop</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- Sidecars are often published ahead-of-time compiled; the analyzers keep this library usable there. -->
+    <IsAotCompatible>true</IsAotCompatible>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TauriKit.Sidecar.Loopback\TauriKit.Sidecar.Loopback.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <!-- MIT asks that its notice travel with each copy; the expression alone does not carry it. -->
+    <None Include="..\..\..\LICENSE" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="TauriKit.Sidecar.Loopback.Tests" />
+  </ItemGroup>
+
+</Project>

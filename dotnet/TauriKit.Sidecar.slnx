@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/TauriKit.Sidecar.Loopback/TauriKit.Sidecar.Loopback.csproj" />
+    <Project Path="src/TauriKit.Sidecar.Loopback.AspNetCore/TauriKit.Sidecar.Loopback.AspNetCore.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/TauriKit.Sidecar.Loopback.Tests/TauriKit.Sidecar.Loopback.Tests.csproj" />

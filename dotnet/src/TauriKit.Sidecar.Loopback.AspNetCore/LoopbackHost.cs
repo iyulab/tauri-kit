@@ -1,4 +1,6 @@
 using System.Net;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -11,14 +13,14 @@ namespace TauriKit.Sidecar.Loopback;
 /// The host side of a loopback backend: it listens on 127.0.0.1 only, on a port the system picks, and tells its
 /// callers where it is in one of two ways. Started by the app as its child, it announces the port as a line on
 /// standard output (<see cref="RunAnnouncingAsync"/>) and accepts the credential the parent passed in an environment
-/// variable (<see cref="ReadToken"/>). Living on its own, outliving the app's windows, it issues its credential itself
-/// and publishes it with the port in an owner-only discovery file (<see cref="RunPublishingAsync"/>). Either way the
-/// requests are checked by <see cref="LoopbackAuthentication"/>, and the names — the variable, the line's prefix, the
-/// file's path — are the app's.
+/// variable (<see cref="LoopbackCredentials.ReadToken"/>). Living on its own, outliving the app's windows, it issues
+/// its credential itself and publishes it with the port in an owner-only discovery file
+/// (<see cref="RunPublishingAsync"/>). Either way the requests are checked by <see cref="LoopbackAuthentication"/>, and
+/// the names — the variable, the line's prefix, the file's path — are the app's.
 /// </summary>
 /// <example>
 /// <code>
-/// var token = LoopbackHost.ReadToken("HELPER_TOKEN");
+/// var token = LoopbackCredentials.ReadToken("HELPER_TOKEN");
 /// if (token is null) { Console.Error.WriteLine("HELPER_TOKEN (32+ characters) is required"); return 2; }
 /// var credentials = new LoopbackCredentials();
 /// credentials.Register(token, "app");
@@ -34,16 +36,6 @@ namespace TauriKit.Sidecar.Loopback;
 /// </example>
 public static class LoopbackHost
 {
-    /// <summary>
-    /// The token from <paramref name="environmentVariable"/>, or <c>null</c> when it is missing or
-    /// shorter than <paramref name="minimumLength"/> — a short token is a mistake, not a secret.
-    /// </summary>
-    public static string? ReadToken(string environmentVariable, int minimumLength = LoopbackCredentials.MinimumLength)
-    {
-        var token = Environment.GetEnvironmentVariable(environmentVariable);
-        return string.IsNullOrEmpty(token) || token.Length < minimumLength ? null : token;
-    }
-
     /// <summary>
     /// A slim web application builder with no logging providers (a sidecar's console is the app's
     /// pipe, not a log) that listens on 127.0.0.1 only. <paramref name="port"/> 0 lets the system pick;
@@ -112,7 +104,7 @@ public static class LoopbackHost
                     return;
                 }
                 context.Response.StatusCode = StatusCodes.Status500InternalServerError;
-                await context.Response.WriteAsJsonAsync(new FaultResponse(Fault.Of(e, options.OwnNamespaces, options.MaxFrames)), LoopbackJson.Default.FaultResponse).ConfigureAwait(false);
+                await context.Response.WriteAsJsonAsync(new FaultResponse(Fault.Of(e, options.OwnNamespaces, options.MaxFrames)), FaultJson.Default.FaultResponse).ConfigureAwait(false);
             }
         });
     }
@@ -201,3 +193,7 @@ public sealed class FaultOptions
     /// </summary>
     public Func<Exception, int?>? StatusFor { get; init; }
 }
+
+[JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
+[JsonSerializable(typeof(FaultResponse))]
+internal sealed partial class FaultJson : JsonSerializerContext;

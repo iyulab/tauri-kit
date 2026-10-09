@@ -45,7 +45,7 @@ jobs:
 
       - name: Pack
         working-directory: dotnet
-        run: dotnet pack src/TauriKit.Sidecar.Loopback/TauriKit.Sidecar.Loopback.csproj -c Release -o nupkg
+        run: dotnet pack TauriKit.Sidecar.slnx -c Release -o nupkg
 
       - name: Push
         working-directory: dotnet

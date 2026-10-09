@@ -7,8 +7,28 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking (.NET):** the loopback package is split in two. `TauriKit.Sidecar.Loopback` no longer
+  references ASP.NET Core: it holds the discovery file (`DiscoveryFile`, `LoopbackDiscovery`,
+  `DiscoveryProblem`), `LoopbackCredentials` and `LoopbackCaller`, and the fault record (`Fault`,
+  `FaultView`, `FaultResponse`), so a caller that only finds and calls a backend (a supervisor, a
+  command-line tool, a test) takes no web framework. The host half moves to the new
+  `TauriKit.Sidecar.Loopback.AspNetCore` package: `LoopbackHost` (`CreateSlimBuilder`,
+  `UseLoopbackHostCheck`, `UseFaults`, `ReadyLine`, `RunAnnouncingAsync`, `RunPublishingAsync`),
+  `FaultOptions`, and `AddLoopbackAuthentication` / `RequireCaller` / `LoopbackCaller()`. The
+  namespace is unchanged. **Migration:** a backend adds a reference to
+  `TauriKit.Sidecar.Loopback.AspNetCore`, and `LoopbackHost.ReadToken` becomes
+  `LoopbackCredentials.ReadToken`.
+
 ### Added
 
+- `TauriKit.Sidecar.Loopback`: `LoopbackDiscoveryHandler`, the caller's side of a backend found by
+  its discovery file. Each request goes to the port the file names, on 127.0.0.1, with the
+  credential as its bearer. When the backend answers 401 or cannot be reached and the file now
+  names another run, the request is sent once more to that run. `LoopbackDiscoveryHandler.CreateClient(path)`
+  returns an `HttpClient` for relative addresses, and a file that names no running backend throws
+  `LoopbackUnavailableException` (an `HttpRequestException`) with its `DiscoveryProblem`.
 - Loopback readiness lines can say more after the port, as `key=value` words (the port the backend
   had to give up, say). Rust: `ready_fields(line, prefix)` reads them, and `ready_port` now takes
   the first word after the prefix, so it accepts such a line. .NET: `ReadyLine` and

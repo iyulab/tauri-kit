@@ -1,6 +1,3 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
-
 namespace TauriKit.Sidecar.Loopback;
 
 /// <summary>
@@ -69,8 +66,3 @@ public static class Fault
         return frames;
     }
 }
-
-[JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
-[JsonSerializable(typeof(FaultResponse))]
-[JsonSerializable(typeof(LoopbackDiscovery))]
-internal sealed partial class LoopbackJson : JsonSerializerContext;

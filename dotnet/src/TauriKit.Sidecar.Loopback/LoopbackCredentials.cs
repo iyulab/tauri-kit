@@ -31,6 +31,17 @@ public sealed class LoopbackCredentials
 
     private readonly ConcurrentDictionary<string, LoopbackCaller> _callers = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// The credential a parent process passed in <paramref name="environmentVariable"/>, or <c>null</c> when it is
+    /// missing or shorter than <paramref name="minimumLength"/> — a short one is a mistake, not a secret. A backend
+    /// registers it (<see cref="Register"/>); a worker the backend started sends it.
+    /// </summary>
+    public static string? ReadToken(string environmentVariable, int minimumLength = MinimumLength)
+    {
+        var token = Environment.GetEnvironmentVariable(environmentVariable);
+        return string.IsNullOrEmpty(token) || token.Length < minimumLength ? null : token;
+    }
+
     /// <summary>Makes a new credential (32 random bytes, base64url) for <paramref name="kind"/> and registers it.</summary>
     public string Issue(string kind, string? subject = null)
     {
@@ -41,7 +52,7 @@ public sealed class LoopbackCredentials
 
     /// <summary>
     /// Registers a credential made elsewhere — the one a parent process passed in an environment variable
-    /// (<see cref="LoopbackHost.ReadToken"/>), say — for <paramref name="kind"/>.
+    /// (<see cref="ReadToken"/>), say — for <paramref name="kind"/>.
     /// </summary>
     /// <exception cref="ArgumentException">The credential is shorter than <see cref="MinimumLength"/>, or the kind is empty.</exception>
     /// <exception cref="InvalidOperationException">The credential is registered already.</exception>

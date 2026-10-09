@@ -1,14 +1,19 @@
 # TauriKit.Sidecar.Loopback
 
-The .NET host side of a desktop app's loopback backend — the counterpart of the
+The .NET side of a desktop app's loopback backend — the counterpart of the
 [`tauri-kit-sidecar`](https://github.com/iyulab/tauri-kit/tree/main/crates/sidecar) crate's
-`loopback` feature, released under the same version.
+`loopback` feature, released under the same version. Two packages, one namespace:
+
+| Package | For | Holds |
+|---|---|---|
+| `TauriKit.Sidecar.Loopback` | anyone — no web framework | the discovery file, credentials and callers, the fault record, the caller's `LoopbackDiscoveryHandler` |
+| `TauriKit.Sidecar.Loopback.AspNetCore` | the backend (ASP.NET Core) | `LoopbackHost`, authentication, the Host check, `UseFaults` |
 
 The backend listens on 127.0.0.1 only, on a port the system picks, and its callers learn where it is
 in one of two ways:
 
 - **Started by the app as its child.** The app passes a fresh random token in an environment
-  variable (`LoopbackHost.ReadToken`), and the backend announces its port as a line on standard
+  variable (`LoopbackCredentials.ReadToken`), and the backend announces its port as a line on standard
   output (`RunAnnouncingAsync`), which the app waits for.
 - **Living on its own**, outliving the app's windows. The backend issues its credential itself and
   publishes it with its port in a discovery file (`RunPublishingAsync`). Only the person running the
@@ -73,7 +78,7 @@ await app.RunPublishingAsync(Path.Combine(stateFolder, "run", "backend.json"), o
 A backend started as a child registers the token its parent passed instead:
 
 ```csharp
-var token = LoopbackHost.ReadToken("HELPER_TOKEN");
+var token = LoopbackCredentials.ReadToken("HELPER_TOKEN");
 if (token is null)
 {
     Console.Error.WriteLine("HELPER_TOKEN (32+ characters) is required");
@@ -85,7 +90,25 @@ credentials.Register(token, "app");
 await app.RunAnnouncingAsync("helper ready port=");
 ```
 
-The library is compatible with ahead-of-time compilation, so a backend published with `PublishAot`
+A caller that finds the backend by its file — a launcher that supervises it, a command-line tool —
+takes only `TauriKit.Sidecar.Loopback`. `LoopbackDiscoveryHandler` sends each request to the port
+the file names with the credential it holds, and when the backend answers 401 or cannot be reached
+and the file now names another run (it restarted), sends the request once more to that run. Content
+sent twice must be readable twice (a string, bytes, a form — not a one-pass stream).
+
+```csharp
+using var client = LoopbackDiscoveryHandler.CreateClient(Path.Combine(stateFolder, "run", "backend.json"));
+try
+{
+    using var answer = await client.PostAsync("/shutdown", content: null);
+}
+catch (LoopbackUnavailableException e) when (e.Problem is DiscoveryProblem.Missing or DiscoveryProblem.Stale)
+{
+    // Not running: nothing to stop.
+}
+```
+
+Both libraries are compatible with ahead-of-time compilation, so a backend published with `PublishAot`
 can use it. Tests can host the same pipeline with `CreateSlimBuilder(args)` and `StartAsync`, and
 reach it over `HttpClient` at `app.Urls`.
 

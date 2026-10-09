@@ -16,8 +16,8 @@
 //! feature, [`Client`] is a blocking one that carries the token and never goes through a proxy.
 //!
 //! The variable's name, the readiness line's prefix and every path are the app's. The .NET host side
-//! of the same arrangement is the `TauriKit.Sidecar.Loopback` package in this repository's `dotnet/`
-//! folder.
+//! of the same arrangement is the `TauriKit.Sidecar.Loopback.AspNetCore` package in this
+//! repository's `dotnet/` folder.
 //!
 //! ```no_run
 //! # #[cfg(feature = "loopback-client")]
@@ -324,7 +324,7 @@ pub struct Fault {
 
 impl Fault {
     /// What the host said about a request it failed, read from the answer's status and body: the
-    /// body `{"fault":{…}}` that `UseFaults` in `TauriKit.Sidecar.Loopback` answers an unexpected
+    /// body `{"fault":{…}}` that `UseFaults` in `TauriKit.Sidecar.Loopback.AspNetCore` answers an unexpected
     /// exception with. `None` for a 2xx answer and for any other body — for an app reading answers
     /// with its own client.
     pub fn from_answer(status: u16, body: &str) -> Option<Fault> {

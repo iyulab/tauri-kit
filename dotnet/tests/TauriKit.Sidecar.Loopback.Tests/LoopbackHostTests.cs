@@ -103,11 +103,11 @@ public sealed class LoopbackHostStaticTests
     public void A_missing_or_short_token_is_refused()
     {
         var name = "TAURI_KIT_TEST_TOKEN_" + Guid.NewGuid().ToString("N");
-        Assert.Null(LoopbackHost.ReadToken(name));
+        Assert.Null(LoopbackCredentials.ReadToken(name));
         Environment.SetEnvironmentVariable(name, "short");
-        Assert.Null(LoopbackHost.ReadToken(name));
+        Assert.Null(LoopbackCredentials.ReadToken(name));
         Environment.SetEnvironmentVariable(name, new string('a', 32));
-        Assert.Equal(new string('a', 32), LoopbackHost.ReadToken(name));
+        Assert.Equal(new string('a', 32), LoopbackCredentials.ReadToken(name));
         Environment.SetEnvironmentVariable(name, null);
     }
 

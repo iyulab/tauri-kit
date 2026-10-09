@@ -30,6 +30,10 @@ internal sealed class UnixMillisecondsConverter : JsonConverter<DateTimeOffset>
     }
 }
 
+[JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
+[JsonSerializable(typeof(LoopbackDiscovery))]
+internal sealed partial class LoopbackJson : JsonSerializerContext;
+
 /// <summary>Why a discovery file gave no backend to call.</summary>
 public enum DiscoveryProblem
 {
