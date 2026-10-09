@@ -1,46 +1,91 @@
 # TauriKit.Sidecar.Loopback
 
-The .NET host side of a desktop app's loopback sidecar — the counterpart of the
+The .NET host side of a desktop app's loopback backend — the counterpart of the
 [`tauri-kit-sidecar`](https://github.com/iyulab/tauri-kit/tree/main/crates/sidecar) crate's
 `loopback` feature, released under the same version.
 
-The app starts the sidecar with a fresh random token in an environment variable. The sidecar:
+The backend listens on 127.0.0.1 only, on a port the system picks, and its callers learn where it is
+in one of two ways:
 
-- listens on 127.0.0.1 only, on a port the system picks;
-- announces that port as a line on standard output, which the app waits for;
-- answers only requests carrying the token as `Authorization: Bearer <token>`, compared in
-  constant time;
-- reports an unexpected failure as its exception type and the frames in the app's own code it
-  passed through, innermost first (`{"fault":{"type","at","frames"}}`) — never the message, which
-  can quote the data the request was about. `Fault.Of` reads a failure away from any request the
-  same way. On the Rust side, `Response::fault` reads that answer as a `Fault`.
+- **Started by the app as its child.** The app passes a fresh random token in an environment
+  variable (`LoopbackHost.ReadToken`), and the backend announces its port as a line on standard
+  output (`RunAnnouncingAsync`), which the app waits for.
+- **Living on its own**, outliving the app's windows. The backend issues its credential itself and
+  publishes it with its port in a discovery file (`RunPublishingAsync`). Only the person running the
+  backend can read that file: on Windows its access list grants that user and the system and
+  nothing else, and elsewhere its mode is 0600. The file is written beside its place and moved in,
+  so a reader never sees half of one. It carries the process id and start time, so
+  `DiscoveryFile.TryRead` tells a file left by a backend that died (`Stale`) from a missing or
+  damaged one. A new credential is issued on every start, so a caller re-reads the file once when
+  it gets a 401.
 
-The variable's name and the line's prefix are the app's, and must match what the Rust side is
-given.
+Either way, requests are checked the same way:
+
+- **Every route needs a registered caller unless it is named open.** `AddLoopbackAuthentication`
+  makes bearer authentication against `LoopbackCredentials` the fallback policy, so a route added
+  later is closed until it is marked `AllowAnonymous()`. A request with no registered credential is
+  answered 401, including one to a path no route serves.
+- **Each caller is told apart.** A backend that runs less-trusted workers (agents, plugins, helper
+  processes) beside an owner-facing shell issues each worker its own credential, tied to a kind and
+  optionally a subject: `credentials.Issue("agent-session", sessionId)`. A route admits only the
+  kinds it names (`RequireCaller("owner")`, 403 otherwise), and a handler reads
+  `context.User.LoopbackCaller()`. `Revoke` stops a credential when its worker is done. Credentials
+  live in memory only. A presented credential is looked up by its SHA-256 digest, so the time a
+  lookup takes says nothing about how close a guess was.
+- **Only this computer's names are answered.** `UseLoopbackHostCheck` answers 400 when the `Host`
+  header is not `127.0.0.1`, `localhost` or `[::1]` with the port the request came in on. Optionally
+  it also accepts names under `localhost`, which browsers resolve to this computer themselves. A web
+  page whose own name was pointed at 127.0.0.1 (DNS rebinding) is refused even on an open route.
+- **Failures don't leak.** `UseFaults` reports an unexpected failure as its exception type and the
+  frames in the app's own code it passed through, innermost first
+  (`{"fault":{"type","at","frames"}}`). It never includes the message, which can quote the data the
+  request was about. `Fault.Of` reads a failure away from any request the same way. On the Rust
+  side, `Response::fault` reads that answer as a `Fault`.
+
+The names are the app's: the variable, the line's prefix, the file's path and the kinds.
 
 ```csharp
 using TauriKit.Sidecar.Loopback;
 
+var credentials = new LoopbackCredentials();
+var owner = credentials.Issue("owner");
+
+var builder = LoopbackHost.CreateSlimBuilder(args);
+builder.Services.AddLoopbackAuthentication(credentials);
+var app = builder.Build();
+app.UseLoopbackHostCheck();
+app.UseFaults(new FaultOptions
+{
+    OwnNamespaces = ["MyCompany."],
+    StatusFor = e => e is KeyNotFoundException ? StatusCodes.Status404NotFound : null,
+});
+app.MapGet("/health", () => "ok").AllowAnonymous();
+app.MapPost("/settings", SaveSettings).RequireCaller("owner");
+app.MapPost("/sessions", (HttpContext context) =>
+{
+    // A worker gets its own credential in its environment, never the owner's.
+    var session = Guid.NewGuid().ToString("N");
+    return new { session, token = credentials.Issue("agent-session", session) };
+}).RequireCaller("owner");
+await app.RunPublishingAsync(Path.Combine(stateFolder, "run", "backend.json"), owner);
+```
+
+A backend started as a child registers the token its parent passed instead:
+
+```csharp
 var token = LoopbackHost.ReadToken("HELPER_TOKEN");
 if (token is null)
 {
     Console.Error.WriteLine("HELPER_TOKEN (32+ characters) is required");
     return 2;
 }
-
-var app = LoopbackHost.CreateSlimBuilder(args).Build();
-app.UseBearerToken(token);
-app.UseFaults(new FaultOptions
-{
-    OwnNamespaces = ["MyCompany."],
-    StatusFor = e => e is KeyNotFoundException ? StatusCodes.Status404NotFound : null,
-});
-app.MapGet("/health", () => "ok");
+var credentials = new LoopbackCredentials();
+credentials.Register(token, "app");
+// … the same builder and routes …
 await app.RunAnnouncingAsync("helper ready port=");
-return 0;
 ```
 
-The library is ahead-of-time compilation compatible: a sidecar published with `PublishAot`
+The library is compatible with ahead-of-time compilation, so a backend published with `PublishAot`
 can use it. Tests can host the same pipeline with `CreateSlimBuilder(args)` and `StartAsync`, and
 reach it over `HttpClient` at `app.Urls`.
 

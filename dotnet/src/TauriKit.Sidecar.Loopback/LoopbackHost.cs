@@ -1,6 +1,4 @@
 using System.Net;
-using System.Security.Cryptography;
-using System.Text;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -10,20 +8,26 @@ using Microsoft.Extensions.Logging;
 namespace TauriKit.Sidecar.Loopback;
 
 /// <summary>
-/// The host side of a loopback sidecar. The desktop app starts the sidecar with a fresh random
-/// token in an environment variable; the sidecar listens on 127.0.0.1 only, on a port the system
-/// picks, announces that port as a line on standard output, and answers only requests that carry
-/// the token as a bearer credential. The variable's name and the line's prefix are the app's.
+/// The host side of a loopback backend: it listens on 127.0.0.1 only, on a port the system picks, and tells its
+/// callers where it is in one of two ways. Started by the app as its child, it announces the port as a line on
+/// standard output (<see cref="RunAnnouncingAsync"/>) and accepts the credential the parent passed in an environment
+/// variable (<see cref="ReadToken"/>). Living on its own, outliving the app's windows, it issues its credential itself
+/// and publishes it with the port in an owner-only discovery file (<see cref="RunPublishingAsync"/>). Either way the
+/// requests are checked by <see cref="LoopbackAuthentication"/>, and the names — the variable, the line's prefix, the
+/// file's path — are the app's.
 /// </summary>
 /// <example>
 /// <code>
 /// var token = LoopbackHost.ReadToken("HELPER_TOKEN");
 /// if (token is null) { Console.Error.WriteLine("HELPER_TOKEN (32+ characters) is required"); return 2; }
+/// var credentials = new LoopbackCredentials();
+/// credentials.Register(token, "app");
 /// var builder = LoopbackHost.CreateSlimBuilder(args);
+/// builder.Services.AddLoopbackAuthentication(credentials);
 /// var app = builder.Build();
-/// app.UseBearerToken(token);
+/// app.UseLoopbackHostCheck();
 /// app.UseFaults(new FaultOptions { OwnNamespaces = ["MyCompany."] });
-/// app.MapGet("/health", () => "ok");
+/// app.MapGet("/health", () => "ok").AllowAnonymous();
 /// await app.RunAnnouncingAsync("helper ready port=");
 /// return 0;
 /// </code>
@@ -34,7 +38,7 @@ public static class LoopbackHost
     /// The token from <paramref name="environmentVariable"/>, or <c>null</c> when it is missing or
     /// shorter than <paramref name="minimumLength"/> — a short token is a mistake, not a secret.
     /// </summary>
-    public static string? ReadToken(string environmentVariable, int minimumLength = 32)
+    public static string? ReadToken(string environmentVariable, int minimumLength = LoopbackCredentials.MinimumLength)
     {
         var token = Environment.GetEnvironmentVariable(environmentVariable);
         return string.IsNullOrEmpty(token) || token.Length < minimumLength ? null : token;
@@ -54,24 +58,33 @@ public static class LoopbackHost
     }
 
     /// <summary>
-    /// Answers 401 to every request whose <c>Authorization</c> header is not <c>Bearer &lt;token&gt;</c>,
-    /// compared in constant time so the answer's timing says nothing about how much of a guess was
-    /// right. Add it before everything else.
+    /// Answers 400 to a request whose <c>Host</c> header is not a loopback name with the port the request came in on —
+    /// <c>127.0.0.1</c>, <c>localhost</c> or <c>[::1]</c> (and, with <paramref name="localhostSubdomains"/>, any name
+    /// under <c>localhost</c>, which browsers resolve to this computer themselves). A web page whose own name was
+    /// pointed at 127.0.0.1 (DNS rebinding) reaches the port but sends its own name, so this refuses it even on a route
+    /// open to anonymous callers. Add it before the routes.
     /// </summary>
-    public static IApplicationBuilder UseBearerToken(this IApplicationBuilder app, string token)
+    public static IApplicationBuilder UseLoopbackHostCheck(this IApplicationBuilder app, bool localhostSubdomains = false)
     {
         ArgumentNullException.ThrowIfNull(app);
-        var expected = Encoding.UTF8.GetBytes("Bearer " + token);
         return app.Use(async (context, next) =>
         {
-            var given = Encoding.UTF8.GetBytes(context.Request.Headers.Authorization.ToString());
-            if (!CryptographicOperations.FixedTimeEquals(given, expected))
+            if (!IsLoopbackHost(context.Request.Host, context.Connection.LocalPort, localhostSubdomains))
             {
-                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
                 return;
             }
             await next(context).ConfigureAwait(false);
         });
+    }
+
+    internal static bool IsLoopbackHost(HostString host, int localPort, bool localhostSubdomains)
+    {
+        if (host.Port != localPort) return false;
+        var name = host.Host;
+        return name is "127.0.0.1" or "[::1]"
+            || name.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            || (localhostSubdomains && name.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase) && name.Length > ".localhost".Length);
     }
 
     /// <summary>
@@ -125,6 +138,27 @@ public static class LoopbackHost
         await writer.WriteLineAsync(ReadyLine(readyPrefix, app.Port())).ConfigureAwait(false);
         await writer.FlushAsync().ConfigureAwait(false);
         await app.WaitForShutdownAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Starts the application, publishes its port and <paramref name="credential"/> in the discovery file at
+    /// <paramref name="discoveryPath"/> once it listens (see <see cref="DiscoveryFile"/>), runs until it is shut down,
+    /// and then removes the file — unless another run has replaced it since. For a backend that outlives the app's
+    /// windows, which callers find rather than start.
+    /// </summary>
+    public static async Task RunPublishingAsync(this WebApplication app, string discoveryPath, string credential)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        await app.StartAsync().ConfigureAwait(false);
+        var published = DiscoveryFile.Publish(discoveryPath, app.Port(), credential);
+        try
+        {
+            await app.WaitForShutdownAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            DiscoveryFile.RemoveIfStill(discoveryPath, published);
+        }
     }
 }
 

@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace TauriKit.Sidecar.Loopback.Tests;
 
@@ -15,8 +16,11 @@ public sealed class LoopbackHostTests : IAsyncLifetime
 
     public async ValueTask InitializeAsync()
     {
-        _app = LoopbackHost.CreateSlimBuilder([]).Build();
-        _app.UseBearerToken(Token);
+        var credentials = new LoopbackCredentials();
+        credentials.Register(Token, "app");
+        var builder = LoopbackHost.CreateSlimBuilder([]);
+        builder.Services.AddLoopbackAuthentication(credentials);
+        _app = builder.Build();
         _app.UseFaults(new FaultOptions
         {
             OwnNamespaces = ["TauriKit.Sidecar.Loopback.Tests"],

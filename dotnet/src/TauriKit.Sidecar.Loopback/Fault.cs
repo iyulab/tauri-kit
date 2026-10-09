@@ -72,4 +72,5 @@ public static class Fault
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(FaultResponse))]
+[JsonSerializable(typeof(LoopbackDiscovery))]
 internal sealed partial class LoopbackJson : JsonSerializerContext;

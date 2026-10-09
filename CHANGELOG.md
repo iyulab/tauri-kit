@@ -7,6 +7,33 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- `TauriKit.Sidecar.Loopback`: a backend that lives on its own. `DiscoveryFile.Publish` writes the
+  port, the credential, the process id and its start time to a file only the person running the
+  backend can read (Windows: an access list of that user and the system, inheriting nothing;
+  elsewhere mode 0600), written beside its place and moved in. `DiscoveryFile.TryRead` tells a
+  missing, a damaged and a stale file (its process gone) apart. `RunPublishingAsync` publishes once
+  the app listens and removes the file on shutdown, unless a later run has replaced it.
+- `TauriKit.Sidecar.Loopback`: callers told apart. `LoopbackCredentials` issues credentials (32
+  random bytes) or registers one made elsewhere, each tied to a `LoopbackCaller` (a kind and,
+  optionally, a subject), and revokes them. Credentials are held in memory and looked up by their
+  SHA-256 digest. `AddLoopbackAuthentication` authenticates bearer requests against them and makes
+  that the fallback policy: every route requires a registered caller unless it is marked
+  `AllowAnonymous()`. `RequireCaller(kinds)` admits only the named kinds (403 otherwise), and
+  `ClaimsPrincipal.LoopbackCaller()` reads the caller in a handler.
+- `TauriKit.Sidecar.Loopback`: `UseLoopbackHostCheck` answers 400 to a request whose `Host` is not
+  `127.0.0.1`, `localhost` or `[::1]` with the port it came in on. Optionally it also accepts names
+  under `localhost`. This refuses a page whose own name was pointed at 127.0.0.1, even on an open
+  route.
+
+### Removed
+
+- `TauriKit.Sidecar.Loopback`: `UseBearerToken(token)`. Register the token instead, then use the
+  authentication above:
+  `var c = new LoopbackCredentials(); c.Register(token, "app"); builder.Services.AddLoopbackAuthentication(c);`.
+  Routes meant to stay open, such as a health check, need `AllowAnonymous()`.
+
 ## [0.12.1] - 2026-10-08
 
 ### Added
