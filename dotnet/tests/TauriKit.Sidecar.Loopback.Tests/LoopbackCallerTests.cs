@@ -164,6 +164,15 @@ public sealed class DiscoveryFileTests : IDisposable
     }
 
     [Fact]
+    public void The_file_has_the_shape_the_rust_side_reads()
+    {
+        var published = DiscoveryFile.Publish(FilePath, 5100, new string('a', 32));
+        var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(FilePath))!.AsObject();
+        Assert.Equal(["port", "token", "pid", "startedAt"], json.Select(p => p.Key));
+        Assert.Equal(published.StartedAt.ToUnixTimeMilliseconds(), (long)json["startedAt"]!);
+    }
+
+    [Fact]
     public void Publishing_again_replaces_the_file_whole()
     {
         DiscoveryFile.Publish(FilePath, 5100, new string('a', 32));

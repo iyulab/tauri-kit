@@ -9,6 +9,18 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ### Added
 
+- `tauri-kit-sidecar` (`loopback`): `Endpoint` is where a backend listens and the token it
+  accepts, separate from any client. `base()` and `authorization()` serve an app that calls with
+  its own HTTP client (async, say), and its `Debug` shows the port only. `Loopback::endpoint()`
+  returns it for a started backend.
+- `tauri-kit-sidecar` (`loopback`): `discover(path)` reads the discovery file a backend that lives
+  on its own publishes (`DiscoveryFile.Publish` on the .NET side) into an `Endpoint`, or
+  `DiscoveryError::{Missing, Unreadable, Stale}`. A file is stale when its process is gone; on
+  Windows the process's start time must match too.
+- `tauri-kit-sidecar` (`loopback`): `Token::from_secret` for a secret made elsewhere. It must be at
+  least 32 visible ASCII characters. `Fault::from_answer(status, body)` reads a host's failure
+  answer for any client.
+
 - `TauriKit.Sidecar.Loopback`: a backend that lives on its own. `DiscoveryFile.Publish` writes the
   port, the credential, the process id and its start time to a file only the person running the
   backend can read (Windows: an access list of that user and the system, inheriting nothing;
@@ -26,6 +38,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   `127.0.0.1`, `localhost` or `[::1]` with the port it came in on. Optionally it also accepts names
   under `localhost`. This refuses a page whose own name was pointed at 127.0.0.1, even on an open
   route.
+
+### Changed
+
+- `tauri-kit-sidecar`: the blocking `Client` (with `Response` and `Stream`) moves behind a new
+  feature, `loopback-client`. `loopback` alone no longer brings in `ureq`, so an app with its own
+  HTTP client does not ship a second one. Migration: enable `loopback-client` where `client()` is
+  used. `Client::new(&Endpoint, &ClientOptions)` replaces `Client::new(port, &Token,
+  &LoopbackOptions)`. `request_timeout` and `body_limit` move from `LoopbackOptions` to
+  `LoopbackOptions::client` (`ClientOptions`). `Loopback::into_parts()` returns
+  `(Sidecar, Endpoint)`; make a `Client` from the endpoint where one is needed.
 
 ### Removed
 

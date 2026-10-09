@@ -1,16 +1,26 @@
-//! A sidecar that serves HTTP on the loopback interface, and the app talking to it.
+//! A desktop app talking HTTP to a backend on the loopback interface.
 //!
-//! The arrangement most such helpers end up with: the app makes a fresh random token and hands it
-//! to the sidecar in an environment variable; the sidecar listens on 127.0.0.1 on a port the system
-//! picks, says which on its first line of stdout, and answers only requests that carry the token as
-//! a bearer credential. Another program on the same computer can reach the port, but not without
-//! the token.
+//! The backend listens on 127.0.0.1 on a port the system picks and answers only requests that carry
+//! its credential as a bearer token. The app learns where it is in one of two ways:
 //!
-//! The variable's name, the readiness line's prefix and every path are the app's — they arrive as
-//! [`LoopbackOptions`]. The .NET host side of the same arrangement is the `TauriKit.Sidecar.Loopback`
-//! package in this repository's `dotnet/` folder.
+//! - **It starts the backend as its child** ([`Loopback::start`]): it makes a fresh random [`Token`],
+//!   hands it over in an environment variable, and waits for the readiness line on which the backend
+//!   announces its port.
+//! - **The backend lives on its own** and outlives the app's windows: it issues its credential itself
+//!   and publishes it with its port in a discovery file only the person running it can read
+//!   ([`discover`]). Every start issues a new credential, so a caller that gets a 401 reads the file
+//!   once more.
+//!
+//! Either way the app ends up with an [`Endpoint`] — the address and the authorization header, apart
+//! from any HTTP client, so an app with its own (async) client uses that. With the `loopback-client`
+//! feature, [`Client`] is a blocking one that carries the token and never goes through a proxy.
+//!
+//! The variable's name, the readiness line's prefix and every path are the app's. The .NET host side
+//! of the same arrangement is the `TauriKit.Sidecar.Loopback` package in this repository's `dotnet/`
+//! folder.
 //!
 //! ```no_run
+//! # #[cfg(feature = "loopback-client")]
 //! # fn main() -> Result<(), tauri_kit_sidecar::loopback::StartError> {
 //! use std::process::Command;
 //! use tauri_kit_sidecar::loopback::{Loopback, LoopbackOptions};
@@ -20,6 +30,8 @@
 //! assert!(response.is_success(), "{}", response.body);
 //! # Ok(())
 //! # }
+//! # #[cfg(not(feature = "loopback-client"))]
+//! # fn main() {}
 //! ```
 
 use std::fmt;
@@ -28,19 +40,38 @@ use std::time::Duration;
 
 use crate::{LineReadiness, Output, Sidecar};
 
-/// A fresh random secret for one sidecar run: 32 bytes from the operating system, as 64 hex digits.
+#[cfg(feature = "loopback-client")]
+mod client;
+mod discovery;
+
+#[cfg(feature = "loopback-client")]
+pub use client::{Client, ClientOptions, Response, Stream, TransportError};
+pub use discovery::{discover, DiscoveryError};
+
+/// A secret that admits a caller: made fresh for one run, or read from a discovery file.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Token(String);
 
 impl Token {
-    /// A new token from the operating system's random source.
+    /// The shortest secret accepted — a short one is a mistake, not a secret.
+    pub const MINIMUM_LENGTH: usize = 32;
+
+    /// A new token from the operating system's random source: 32 bytes, as 64 hex digits.
     pub fn generate() -> std::io::Result<Token> {
         let mut secret = [0u8; 32];
         getrandom::fill(&mut secret).map_err(|e| std::io::Error::other(e.to_string()))?;
         Ok(Token(secret.iter().map(|b| format!("{b:02x}")).collect()))
     }
 
-    /// The token itself, to hand to the sidecar.
+    /// A secret made elsewhere — the backend's own, say — or `None` when it is shorter than
+    /// [`MINIMUM_LENGTH`](Token::MINIMUM_LENGTH) or holds anything but visible ASCII (it goes in a header).
+    pub fn from_secret(secret: impl Into<String>) -> Option<Token> {
+        let secret = secret.into();
+        (secret.len() >= Self::MINIMUM_LENGTH && secret.bytes().all(|b| b.is_ascii_graphic()))
+            .then_some(Token(secret))
+    }
+
+    /// The token itself, to hand to the backend.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -58,12 +89,57 @@ impl fmt::Debug for Token {
     }
 }
 
+/// Where a loopback backend is and how to be admitted: a port on 127.0.0.1 and the token. The host's
+/// duty with it, whatever client it uses: never send it through a proxy (a system proxy would see
+/// loopback traffic and the token), and never log [`authorization`](Endpoint::authorization).
+#[derive(Clone, PartialEq, Eq)]
+pub struct Endpoint {
+    port: u16,
+    token: Token,
+}
+
+impl Endpoint {
+    /// The backend on `port` that accepts `token`.
+    pub fn new(port: u16, token: Token) -> Endpoint {
+        Endpoint { port, token }
+    }
+
+    /// The port on 127.0.0.1.
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// The token the backend accepts.
+    pub fn token(&self) -> &Token {
+        &self.token
+    }
+
+    /// `http://127.0.0.1:<port>` — a request's path follows it.
+    pub fn base(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+
+    /// The `Authorization` header value for every request.
+    pub fn authorization(&self) -> String {
+        self.token.bearer()
+    }
+}
+
+/// The port only: the token never shows.
+impl fmt::Debug for Endpoint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Endpoint")
+            .field("port", &self.port)
+            .finish_non_exhaustive()
+    }
+}
+
 /// The port a readiness line announces: what follows `prefix`, as a port number.
 pub fn ready_port(line: &str, prefix: &str) -> Option<u16> {
     line.strip_prefix(prefix)?.trim().parse().ok()
 }
 
-/// How to start a loopback sidecar and talk to it.
+/// How to start a loopback backend as the app's child.
 #[derive(Debug, Clone)]
 pub struct LoopbackOptions {
     /// The environment variable the token is handed over in.
@@ -72,15 +148,14 @@ pub struct LoopbackOptions {
     pub ready_prefix: String,
     /// How long to wait for the readiness line. Default 30 seconds.
     pub ready_timeout: Duration,
-    /// How long one request may take, from connecting to the last byte. Default 120 seconds.
-    pub request_timeout: Duration,
-    /// The most bytes of a response body read. Default 256 MiB.
-    pub body_limit: u64,
-    /// Where the sidecar's stdout is appended — every line, the readiness line included — if
+    /// Where the backend's stdout is appended — every line, the readiness line included — if
     /// anywhere.
     pub stdout: Option<std::path::PathBuf>,
-    /// Where the sidecar's stderr is appended, if anywhere.
+    /// Where the backend's stderr is appended, if anywhere.
     pub stderr: Option<std::path::PathBuf>,
+    /// How the [`Client`] [`Loopback::start`] makes behaves.
+    #[cfg(feature = "loopback-client")]
+    pub client: ClientOptions,
 }
 
 impl LoopbackOptions {
@@ -91,15 +166,15 @@ impl LoopbackOptions {
             token_env: token_env.into(),
             ready_prefix: ready_prefix.into(),
             ready_timeout: Duration::from_secs(30),
-            request_timeout: Duration::from_secs(120),
-            body_limit: 256 * 1024 * 1024,
             stdout: None,
             stderr: None,
+            #[cfg(feature = "loopback-client")]
+            client: ClientOptions::default(),
         }
     }
 }
 
-/// Why a loopback sidecar did not start.
+/// Why a loopback backend did not start.
 #[derive(Debug)]
 pub enum StartError {
     /// The process could not be started, or the token could not be made.
@@ -132,15 +207,17 @@ impl std::error::Error for StartError {
     }
 }
 
-/// A running loopback sidecar. Dropping it stops the process and everything it started.
+/// A running loopback backend the app started. Dropping it stops the process and everything it
+/// started.
 pub struct Loopback {
     sidecar: Sidecar,
+    endpoint: Endpoint,
+    #[cfg(feature = "loopback-client")]
     client: Client,
 }
 
 impl Loopback {
-    /// Starts `cmd` with a fresh token in the environment, waits for its readiness line, and answers
-    /// the running sidecar with a client for its port.
+    /// Starts `cmd` with a fresh token in the environment and waits for its readiness line.
     pub fn start(mut cmd: Command, options: &LoopbackOptions) -> Result<Loopback, StartError> {
         let token = Token::generate().map_err(StartError::Spawn)?;
         cmd.env(&options.token_env, token.as_str());
@@ -163,62 +240,41 @@ impl Loopback {
             LineReadiness::Exited(status) => return Err(StartError::Exited(status)),
             LineReadiness::TimedOut => return Err(StartError::TimedOut(options.ready_timeout)),
         };
+        let endpoint = Endpoint::new(port, token);
         Ok(Loopback {
             sidecar,
-            client: Client::new(port, &token, options),
+            #[cfg(feature = "loopback-client")]
+            client: Client::new(&endpoint, &options.client),
+            endpoint,
         })
     }
 
-    /// The client for the sidecar's port, carrying its token.
+    /// Where the backend listens and the token it accepts — for an app that calls it with its own
+    /// HTTP client.
+    pub fn endpoint(&self) -> &Endpoint {
+        &self.endpoint
+    }
+
+    /// A blocking client for the backend, carrying its token.
+    #[cfg(feature = "loopback-client")]
     pub fn client(&self) -> &Client {
         &self.client
     }
 
-    /// The sidecar process, to check on or stop.
+    /// The backend process, to check on or stop.
     pub fn sidecar(&mut self) -> &mut Sidecar {
         &mut self.sidecar
     }
 
-    /// The process and the client, apart — for an app that keeps the process where it stops it and
-    /// hands copies of the client to whatever makes requests.
-    pub fn into_parts(self) -> (Sidecar, Client) {
-        (self.sidecar, self.client)
+    /// The process and the endpoint, apart — for an app that keeps the process where it stops it and
+    /// hands copies of the endpoint to whatever makes requests.
+    pub fn into_parts(self) -> (Sidecar, Endpoint) {
+        (self.sidecar, self.endpoint)
     }
 
-    /// Stops the sidecar, waiting up to `grace` for it to exit on its own first.
+    /// Stops the backend, waiting up to `grace` for it to exit on its own first.
     pub fn shutdown(self, grace: Duration) -> std::io::Result<std::process::ExitStatus> {
         self.sidecar.shutdown(grace)
-    }
-}
-
-/// An answer from the sidecar: its status and its body as text. A status outside 2xx is an answer
-/// like any other, for the app to read.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Response {
-    pub status: u16,
-    pub body: String,
-}
-
-impl Response {
-    /// Whether the status is 2xx.
-    pub fn is_success(&self) -> bool {
-        (200..300).contains(&self.status)
-    }
-
-    /// What the host said about a request it failed, when it said something: the body
-    /// `{"fault":{…}}` that `UseFaults` in `TauriKit.Sidecar.Loopback` answers an unexpected
-    /// exception with. `None` for a 2xx answer and for any other body.
-    pub fn fault(&self) -> Option<Fault> {
-        #[derive(serde::Deserialize)]
-        struct Answer {
-            fault: Fault,
-        }
-        if self.is_success() {
-            return None;
-        }
-        serde_json::from_str::<Answer>(&self.body)
-            .ok()
-            .map(|a| a.fault)
     }
 }
 
@@ -242,173 +298,20 @@ pub struct Fault {
     pub frames: Vec<String>,
 }
 
-/// Why a request got no answer.
-#[derive(Debug)]
-pub struct TransportError(String);
-
-impl fmt::Display for TransportError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "the sidecar could not be reached: {}", self.0)
-    }
-}
-
-impl std::error::Error for TransportError {}
-
-/// An answer read as it arrives — a streamed body such as server-sent events. Read it line by line
-/// through [`BufRead`](std::io::BufRead); the body ends when the sidecar closes it.
-pub struct Stream {
-    /// The answer's status. A status outside 2xx streams its body like any other.
-    pub status: u16,
-    body: std::io::BufReader<ureq::BodyReader<'static>>,
-}
-
-impl Stream {
-    /// Whether the status is 2xx.
-    pub fn is_success(&self) -> bool {
-        (200..300).contains(&self.status)
-    }
-}
-
-impl fmt::Debug for Stream {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Stream")
-            .field("status", &self.status)
-            .finish_non_exhaustive()
-    }
-}
-
-impl std::io::Read for Stream {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.body.read(buf)
-    }
-}
-
-impl std::io::BufRead for Stream {
-    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
-        self.body.fill_buf()
-    }
-    fn consume(&mut self, amount: usize) {
-        self.body.consume(amount)
-    }
-}
-
-/// Talks HTTP to a sidecar on 127.0.0.1: every request carries the token, no proxy is ever used
-/// (a system proxy would otherwise see loopback traffic and the token), and a non-2xx status comes
-/// back as a [`Response`] rather than an error.
-#[derive(Clone)]
-pub struct Client {
-    agent: ureq::Agent,
-    base: String,
-    authorization: String,
-    body_limit: u64,
-    timeout: Option<Duration>,
-}
-
-impl fmt::Debug for Client {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Client")
-            .field("base", &self.base)
-            .finish_non_exhaustive()
-    }
-}
-
-impl Client {
-    /// A client for `port` on 127.0.0.1, carrying `token`.
-    pub fn new(port: u16, token: &Token, options: &LoopbackOptions) -> Client {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .proxy(None)
-            .timeout_global(Some(options.request_timeout))
-            .build()
-            .into();
-        Client {
-            agent,
-            base: format!("http://127.0.0.1:{port}"),
-            authorization: token.bearer(),
-            body_limit: options.body_limit,
-            timeout: None,
+impl Fault {
+    /// What the host said about a request it failed, read from the answer's status and body: the
+    /// body `{"fault":{…}}` that `UseFaults` in `TauriKit.Sidecar.Loopback` answers an unexpected
+    /// exception with. `None` for a 2xx answer and for any other body — for an app reading answers
+    /// with its own client.
+    pub fn from_answer(status: u16, body: &str) -> Option<Fault> {
+        #[derive(serde::Deserialize)]
+        struct Answer {
+            fault: Fault,
         }
-    }
-
-    /// The same client, giving up on each request after `timeout` instead of
-    /// [`LoopbackOptions::request_timeout`] — a quick health check, or a long streamed answer.
-    pub fn within(&self, timeout: Duration) -> Client {
-        Client {
-            timeout: Some(timeout),
-            ..self.clone()
+        if (200..300).contains(&status) {
+            return None;
         }
-    }
-
-    /// `http://127.0.0.1:<port>`.
-    pub fn base(&self) -> &str {
-        &self.base
-    }
-
-    /// GET `path` (starting with `/`).
-    pub fn get(&self, path: &str) -> Result<Response, TransportError> {
-        let response = self.prepare(self.agent.get(self.url(path))).call();
-        self.read(response)
-    }
-
-    /// POST to `path` (starting with `/`) with no body.
-    pub fn post(&self, path: &str) -> Result<Response, TransportError> {
-        let response = self.prepare(self.agent.post(self.url(path))).send_empty();
-        self.read(response)
-    }
-
-    /// POST `json` to `path` (starting with `/`), as `application/json`.
-    pub fn post_json(&self, path: &str, json: &str) -> Result<Response, TransportError> {
-        let response = self
-            .prepare(self.agent.post(self.url(path)))
-            .content_type("application/json")
-            .send(json);
-        self.read(response)
-    }
-
-    /// POST `json` to `path` (starting with `/`) and read the answer as it arrives.
-    pub fn post_json_stream(&self, path: &str, json: &str) -> Result<Stream, TransportError> {
-        let response = self
-            .prepare(self.agent.post(self.url(path)))
-            .content_type("application/json")
-            .send(json)
-            .map_err(|e| TransportError(e.to_string()))?;
-        let status = response.status().as_u16();
-        let body = response
-            .into_body()
-            .into_with_config()
-            .limit(self.body_limit)
-            .reader();
-        Ok(Stream {
-            status,
-            body: std::io::BufReader::new(body),
-        })
-    }
-
-    fn url(&self, path: &str) -> String {
-        format!("{}{path}", self.base)
-    }
-
-    fn prepare<B>(&self, request: ureq::RequestBuilder<B>) -> ureq::RequestBuilder<B> {
-        let request = request.header("Authorization", &self.authorization);
-        match self.timeout {
-            Some(timeout) => request.config().timeout_global(Some(timeout)).build(),
-            None => request,
-        }
-    }
-
-    fn read(
-        &self,
-        response: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
-    ) -> Result<Response, TransportError> {
-        let mut response = response.map_err(|e| TransportError(e.to_string()))?;
-        let status = response.status().as_u16();
-        let body = response
-            .body_mut()
-            .with_config()
-            .limit(self.body_limit)
-            .read_to_string()
-            .map_err(|e| TransportError(e.to_string()))?;
-        Ok(Response { status, body })
+        serde_json::from_str::<Answer>(body).ok().map(|a| a.fault)
     }
 }
 
@@ -430,16 +333,35 @@ mod tests {
     fn a_token_never_shows_in_debug_output() {
         let token = Token::generate().unwrap();
         assert!(!format!("{token:?}").contains(token.as_str()));
+        let endpoint = Endpoint::new(5100, token.clone());
+        assert!(!format!("{endpoint:?}").contains(token.as_str()));
+    }
+
+    #[test]
+    fn a_secret_made_elsewhere_must_be_long_and_fit_a_header() {
+        assert!(Token::from_secret("a".repeat(32)).is_some());
+        assert!(Token::from_secret("a".repeat(31)).is_none());
+        assert!(Token::from_secret(format!("{} b", "a".repeat(32))).is_none());
+        assert!(Token::from_secret(format!("{}\r\nX-Other: 1", "a".repeat(32))).is_none());
+    }
+
+    #[test]
+    fn an_endpoint_is_the_address_and_the_header() {
+        let token = Token::from_secret("a".repeat(43)).unwrap();
+        let endpoint = Endpoint::new(51234, token);
+        assert_eq!(endpoint.base(), "http://127.0.0.1:51234");
+        assert_eq!(
+            endpoint.authorization(),
+            format!("Bearer {}", "a".repeat(43))
+        );
+        assert_eq!(endpoint.port(), 51234);
     }
 
     #[test]
     fn a_failed_answer_says_what_failed() {
-        let failed = Response {
-            status: 500,
-            body: r#"{"fault":{"type":"System.IO.IOException","at":"App.Store.Read","frames":["App.Store.Read","App.Api.Get"]}}"#.into(),
-        };
+        let body = r#"{"fault":{"type":"System.IO.IOException","at":"App.Store.Read","frames":["App.Store.Read","App.Api.Get"]}}"#;
         assert_eq!(
-            failed.fault(),
+            Fault::from_answer(500, body),
             Some(Fault {
                 kind: "System.IO.IOException".into(),
                 at: Some("App.Store.Read".into()),
@@ -450,33 +372,23 @@ mod tests {
 
     #[test]
     fn a_fault_outside_the_apps_code_has_no_frames() {
-        let failed = Response {
-            status: 500,
-            body: r#"{"fault":{"type":"System.InvalidOperationException","at":null,"frames":[]}}"#
-                .into(),
-        };
-        let fault = failed.fault().unwrap();
+        let fault = Fault::from_answer(
+            500,
+            r#"{"fault":{"type":"System.InvalidOperationException","at":null,"frames":[]}}"#,
+        )
+        .unwrap();
         assert_eq!(fault.at, None);
         assert!(fault.frames.is_empty());
     }
 
     #[test]
     fn only_a_failed_answer_with_a_fault_body_has_a_fault() {
-        let ok = Response {
-            status: 200,
-            body: r#"{"fault":{"type":"X","frames":[]}}"#.into(),
-        };
-        assert_eq!(ok.fault(), None);
-        let bare = Response {
-            status: 503,
-            body: String::new(),
-        };
-        assert_eq!(bare.fault(), None);
-        let other = Response {
-            status: 400,
-            body: r#"{"error":"bad"}"#.into(),
-        };
-        assert_eq!(other.fault(), None);
+        assert_eq!(
+            Fault::from_answer(200, r#"{"fault":{"type":"X","frames":[]}}"#),
+            None
+        );
+        assert_eq!(Fault::from_answer(503, ""), None);
+        assert_eq!(Fault::from_answer(400, r#"{"error":"bad"}"#), None);
     }
 
     #[test]

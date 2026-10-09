@@ -10,10 +10,12 @@ keywords = ["tauri", "sidecar", "process", "job-object", "desktop"]
 categories = ["os"]
 
 [features]
-# A sidecar that serves HTTP on 127.0.0.1 with a per-run token: the token, the readiness line that
-# announces the port, a client, and the host side's failure answer. Off by default — it brings an
-# HTTP client and a JSON reader along.
-loopback = ["dep:getrandom", "dep:ureq", "dep:serde", "dep:serde_json"]
+# A backend that serves HTTP on 127.0.0.1 with a bearer token: the token, the readiness line that
+# announces the port, the discovery file a backend living on its own publishes, the endpoint, and
+# the host side's failure answer. Off by default — it brings a JSON reader along.
+loopback = ["dep:getrandom", "dep:serde", "dep:serde_json"]
+# A blocking client for it, for an app with no HTTP client of its own.
+loopback-client = ["loopback", "dep:ureq"]
 
 [dependencies]
 getrandom = { version = "0.4", optional = true }

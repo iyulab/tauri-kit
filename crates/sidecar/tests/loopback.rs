@@ -1,13 +1,15 @@
 //! The loopback arrangement against a real child process: this test binary, started again as a
 //! small HTTP server that checks the token it was handed.
-#![cfg(feature = "loopback")]
+#![cfg(feature = "loopback-client")]
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::process::Command;
 use std::time::Duration;
 
-use tauri_kit_sidecar::loopback::{Loopback, LoopbackOptions, StartError};
+use tauri_kit_sidecar::loopback::{
+    Client, ClientOptions, Endpoint, Loopback, LoopbackOptions, StartError, Token,
+};
 
 const TOKEN_ENV: &str = "LOOPBACK_TEST_TOKEN";
 const PREFIX: &str = "loopback-test ready port=";
@@ -117,8 +119,9 @@ fn requests_carry_the_token_and_statuses_come_back_as_answers() {
 #[test]
 fn the_parts_keep_working_apart() {
     let helper = Loopback::start(helper("serve"), &options()).unwrap();
-    let (mut sidecar, client) = helper.into_parts();
+    let (mut sidecar, endpoint) = helper.into_parts();
     assert!(sidecar.is_running());
+    let client = Client::new(&endpoint, &ClientOptions::default());
     assert_eq!(client.get("/items").unwrap().status, 200);
     sidecar.shutdown(Duration::ZERO).unwrap();
 }
@@ -172,17 +175,9 @@ fn stdout_is_kept_in_a_file_from_the_readiness_line_on() {
 #[test]
 fn a_request_without_the_token_is_refused() {
     let helper = Loopback::start(helper("serve"), &options()).unwrap();
-    let other = tauri_kit_sidecar::loopback::Client::new(
-        helper
-            .client()
-            .base()
-            .rsplit(':')
-            .next()
-            .unwrap()
-            .parse()
-            .unwrap(),
-        &tauri_kit_sidecar::loopback::Token::generate().unwrap(),
-        &options(),
+    let other = Client::new(
+        &Endpoint::new(helper.endpoint().port(), Token::generate().unwrap()),
+        &ClientOptions::default(),
     );
     let refused = other.get("/items").unwrap();
     assert_eq!(refused.status, 401);
