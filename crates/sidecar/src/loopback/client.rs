@@ -1,7 +1,15 @@
 //! A blocking HTTP client for a loopback backend (feature `loopback-client`).
 
 use std::fmt;
+use std::net::{Shutdown, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use ureq::unversioned::resolver::DefaultResolver;
+use ureq::unversioned::transport::{
+    Buffers, ConnectionDetails, Connector, LazyBuffers, NextTimeout, Transport,
+};
 
 use super::{Endpoint, Fault};
 
@@ -57,11 +65,13 @@ impl fmt::Display for TransportError {
 impl std::error::Error for TransportError {}
 
 /// An answer read as it arrives — a streamed body such as server-sent events. Read it line by line
-/// through [`BufRead`](std::io::BufRead); the body ends when the backend closes it.
+/// through [`BufRead`](std::io::BufRead); the body ends when the backend closes it, or when the
+/// stream is closed from this side ([`Stream::closer`]).
 pub struct Stream {
     /// The answer's status. A status outside 2xx streams its body like any other.
     pub status: u16,
     body: std::io::BufReader<ureq::BodyReader<'static>>,
+    connection: Arc<Connection>,
 }
 
 impl Stream {
@@ -69,28 +79,251 @@ impl Stream {
     pub fn is_success(&self) -> bool {
         (200..300).contains(&self.status)
     }
+
+    /// A handle that ends this stream from any thread — when the view that shows it goes away, or
+    /// the person stops what it reports. Closing shuts the connection, so the backend sees the
+    /// disconnect at once; a read blocked on a quiet stream returns as the end of the body within
+    /// about 50 ms, and every later read does too.
+    pub fn closer(&self) -> StreamCloser {
+        StreamCloser(self.connection.clone())
+    }
+}
+
+impl Drop for Stream {
+    fn drop(&mut self) {
+        // The held copy of the socket would otherwise keep the connection open for as long as a
+        // closer lives.
+        self.connection.shut();
+    }
 }
 
 impl fmt::Debug for Stream {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Stream")
             .field("status", &self.status)
+            .field("closed", &self.connection.is_closed())
             .finish_non_exhaustive()
     }
 }
 
 impl std::io::Read for Stream {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.body.read(buf)
+        if self.connection.is_closed() {
+            return Ok(0);
+        }
+        match self.body.read(buf) {
+            Err(_) if self.connection.is_closed() => Ok(0),
+            read => read,
+        }
     }
 }
 
 impl std::io::BufRead for Stream {
     fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
-        self.body.fill_buf()
+        if self.connection.is_closed() {
+            return Ok(&[]);
+        }
+        let connection = &self.connection;
+        match self.body.fill_buf() {
+            Err(_) if connection.is_closed() => Ok(&[]),
+            filled => filled,
+        }
     }
     fn consume(&mut self, amount: usize) {
         self.body.consume(amount)
+    }
+}
+
+/// Ends a [`Stream`] from any thread — see [`Stream::closer`]. Closing twice, or after the stream
+/// ended by itself, does nothing.
+#[derive(Clone)]
+pub struct StreamCloser(Arc<Connection>);
+
+impl StreamCloser {
+    /// Shuts the stream's connection: the reading side gets the end of the body now.
+    pub fn close(&self) {
+        self.0.close();
+    }
+
+    /// Whether [`close`](StreamCloser::close) was called.
+    pub fn is_closed(&self) -> bool {
+        self.0.is_closed()
+    }
+}
+
+impl fmt::Debug for StreamCloser {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StreamCloser")
+            .field("closed", &self.0.is_closed())
+            .finish()
+    }
+}
+
+/// A streamed answer's connection, held apart from the reader so that another thread can shut it.
+#[derive(Debug, Default)]
+struct Connection {
+    closed: AtomicBool,
+    socket: Mutex<Option<TcpStream>>,
+}
+
+impl Connection {
+    fn close(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+        self.shut();
+    }
+
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::SeqCst)
+    }
+
+    /// Shuts the socket both ways, which wakes a read blocked on it, and lets the copy go.
+    fn shut(&self) {
+        let held = self
+            .socket
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+        if let Some(socket) = held {
+            let _ = socket.shutdown(Shutdown::Both);
+        }
+    }
+
+    fn hold(&self, socket: TcpStream) {
+        *self
+            .socket
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(socket);
+    }
+}
+
+/// Connects a streamed request over plain TCP, keeping a copy of the socket in the stream's
+/// [`Connection`] — ureq offers no other way to reach the socket under a body reader. One per
+/// stream, so the copy is always that stream's.
+#[derive(Debug)]
+struct HoldSocket(Arc<Connection>);
+
+impl Connector for HoldSocket {
+    type Out = SocketTransport;
+
+    fn connect(
+        &self,
+        details: &ConnectionDetails,
+        _chained: Option<()>,
+    ) -> Result<Option<SocketTransport>, ureq::Error> {
+        let mut failed = None;
+        for addr in details.addrs.iter() {
+            let connected = match details.timeout.not_zero() {
+                Some(timeout) => TcpStream::connect_timeout(addr, *timeout),
+                None => TcpStream::connect(addr),
+            };
+            match connected {
+                Ok(socket) => {
+                    if details.config.no_delay() {
+                        socket.set_nodelay(true)?;
+                    }
+                    self.0.hold(socket.try_clone()?);
+                    let buffers = LazyBuffers::new(
+                        details.config.input_buffer_size(),
+                        details.config.output_buffer_size(),
+                    );
+                    return Ok(Some(SocketTransport {
+                        socket,
+                        buffers,
+                        connection: self.0.clone(),
+                    }));
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                    return Err(ureq::Error::Timeout(ureq::Timeout::Connect));
+                }
+                Err(e) => failed = Some(e),
+            }
+        }
+        Err(ureq::Error::Io(failed.unwrap_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::ConnectionRefused,
+                "no address to connect to",
+            )
+        })))
+    }
+}
+
+/// A streamed request's TCP connection. It serves one request — the agent around it lives for one
+/// stream — so it is never offered back for another.
+///
+/// It waits for input in short slices and looks at the stream's [`Connection`] between them:
+/// shutting a socket does not wake a read blocked on it in another thread on every platform
+/// (Windows leaves it waiting until the peer closes), so a close is noticed here within one slice.
+#[derive(Debug)]
+struct SocketTransport {
+    socket: TcpStream,
+    buffers: LazyBuffers,
+    connection: Arc<Connection>,
+}
+
+/// How long one wait for input lasts before the transport looks for a close.
+const CLOSE_CHECK: Duration = Duration::from_millis(50);
+
+impl SocketTransport {
+    fn timed_out(timeout: NextTimeout, e: std::io::Error) -> ureq::Error {
+        match e.kind() {
+            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => {
+                ureq::Error::Timeout(timeout.reason)
+            }
+            _ => ureq::Error::Io(e),
+        }
+    }
+}
+
+impl Transport for SocketTransport {
+    fn buffers(&mut self) -> &mut dyn Buffers {
+        &mut self.buffers
+    }
+
+    fn transmit_output(&mut self, amount: usize, timeout: NextTimeout) -> Result<(), ureq::Error> {
+        use std::io::Write;
+        self.socket
+            .set_write_timeout(timeout.not_zero().map(|t| *t))?;
+        let output = &self.buffers.output()[..amount];
+        self.socket
+            .write_all(output)
+            .map_err(|e| Self::timed_out(timeout, e))
+    }
+
+    fn await_input(&mut self, timeout: NextTimeout) -> Result<bool, ureq::Error> {
+        use std::io::Read;
+        let deadline = timeout.not_zero().map(|t| std::time::Instant::now() + *t);
+        loop {
+            if self.connection.is_closed() {
+                return Err(ureq::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionAborted,
+                    "the stream was closed",
+                )));
+            }
+            let wait = match deadline {
+                Some(deadline) => deadline.saturating_duration_since(std::time::Instant::now()),
+                None => CLOSE_CHECK,
+            };
+            if wait.is_zero() {
+                return Err(ureq::Error::Timeout(timeout.reason));
+            }
+            self.socket.set_read_timeout(Some(wait.min(CLOSE_CHECK)))?;
+            match self.socket.read(self.buffers.input_append_buf()) {
+                Ok(amount) => {
+                    self.buffers.input_appended(amount);
+                    return Ok(amount > 0);
+                }
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                    ) => {}
+                Err(e) => return Err(ureq::Error::Io(e)),
+            }
+        }
+    }
+
+    fn is_open(&mut self) -> bool {
+        false
     }
 }
 
@@ -167,23 +400,22 @@ impl Client {
         self.read(response)
     }
 
+    /// GET `path` (starting with `/`) and read the answer as it arrives — an event feed, the shape
+    /// a page's `EventSource` opens.
+    pub fn get_stream(&self, path: &str) -> Result<Stream, TransportError> {
+        let (agent, connection) = self.stream_agent();
+        let response = self.prepare(agent.get(self.url(path))).call();
+        self.stream(response, connection)
+    }
+
     /// POST `json` to `path` (starting with `/`) and read the answer as it arrives.
     pub fn post_json_stream(&self, path: &str, json: &str) -> Result<Stream, TransportError> {
+        let (agent, connection) = self.stream_agent();
         let response = self
-            .prepare(self.agent.post(self.url(path)))
+            .prepare(agent.post(self.url(path)))
             .content_type("application/json")
-            .send(json)
-            .map_err(|e| TransportError(e.to_string()))?;
-        let status = response.status().as_u16();
-        let body = response
-            .into_body()
-            .into_with_config()
-            .limit(self.body_limit)
-            .reader();
-        Ok(Stream {
-            status,
-            body: std::io::BufReader::new(body),
-        })
+            .send(json);
+        self.stream(response, connection)
     }
 
     fn url(&self, path: &str) -> String {
@@ -196,6 +428,36 @@ impl Client {
             Some(timeout) => request.config().timeout_global(Some(timeout)).build(),
             None => request,
         }
+    }
+
+    /// An agent of its own for one streamed request — the same settings, its socket held apart.
+    fn stream_agent(&self) -> (ureq::Agent, Arc<Connection>) {
+        let connection = Arc::new(Connection::default());
+        let agent = ureq::Agent::with_parts(
+            self.agent.config().clone(),
+            HoldSocket(connection.clone()),
+            DefaultResolver::default(),
+        );
+        (agent, connection)
+    }
+
+    fn stream(
+        &self,
+        response: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
+        connection: Arc<Connection>,
+    ) -> Result<Stream, TransportError> {
+        let response = response.map_err(|e| TransportError(e.to_string()))?;
+        let status = response.status().as_u16();
+        let body = response
+            .into_body()
+            .into_with_config()
+            .limit(self.body_limit)
+            .reader();
+        Ok(Stream {
+            status,
+            body: std::io::BufReader::new(body),
+            connection,
+        })
     }
 
     fn read(

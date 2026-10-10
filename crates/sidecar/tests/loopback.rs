@@ -5,7 +5,8 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::process::Command;
-use std::time::Duration;
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use tauri_kit_sidecar::loopback::{
     Client, ClientOptions, Endpoint, Loopback, LoopbackOptions, StartError, Token,
@@ -152,6 +153,106 @@ fn a_streamed_answer_is_read_as_it_arrives() {
         .filter(|l| !l.is_empty())
         .collect();
     assert_eq!(events, ["data: 1", "data: 2", "data: 3"]);
+}
+
+#[test]
+fn a_streamed_get_is_read_as_it_arrives() {
+    let helper = Loopback::start(helper("serve"), &options()).unwrap();
+    let stream = helper.client().get_stream("/stream").unwrap();
+    assert!(stream.is_success());
+    let events: Vec<String> = stream
+        .lines()
+        .map(Result::unwrap)
+        .filter(|l| !l.is_empty())
+        .collect();
+    assert_eq!(events, ["data: 1", "data: 2", "data: 3"]);
+}
+
+/// A backend in this process that sends one event and then says nothing, reporting when the
+/// client goes away.
+fn quiet_feed() -> (Client, mpsc::Receiver<(String, Instant)>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = Endpoint::new(
+        listener.local_addr().unwrap().port(),
+        Token::generate().unwrap(),
+    );
+    let (gone, went) = mpsc::channel();
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut request = String::new();
+        reader.read_line(&mut request).unwrap();
+        loop {
+            let mut header = String::new();
+            reader.read_line(&mut header).unwrap();
+            if header.trim_end().is_empty() {
+                break;
+            }
+        }
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ntransfer-encoding: chunked\r\n\r\n"
+        )
+        .unwrap();
+        write!(stream, "9\r\ndata: 1\n\n\r\n").unwrap();
+        stream.flush().unwrap();
+        // Nothing more until the client disconnects.
+        let _ = std::io::Read::read(&mut reader, &mut [0; 64]);
+        let _ = gone.send((request, Instant::now()));
+        // Hold the connection open: the client's read must end by its own close, not this one.
+        std::thread::sleep(Duration::from_secs(3));
+        drop(stream);
+    });
+    (Client::new(&endpoint, &ClientOptions::default()), went)
+}
+
+#[test]
+fn closing_a_quiet_stream_from_another_thread_ends_the_read_and_the_connection_at_once() {
+    let (client, went) = quiet_feed();
+    let mut stream = client.get_stream("/events").unwrap();
+    let mut first = String::new();
+    stream.read_line(&mut first).unwrap();
+    assert_eq!(first, "data: 1\n");
+
+    let closer = stream.closer();
+    let closing = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(200));
+        let at = Instant::now();
+        closer.close();
+        closer.close(); // twice does nothing more
+        at
+    });
+    let mut rest = String::new();
+    loop {
+        let mut line = String::new();
+        if stream.read_line(&mut line).unwrap() == 0 {
+            break;
+        }
+        rest.push_str(&line);
+    }
+    let ended = Instant::now();
+    let closed_at = closing.join().unwrap();
+    assert_eq!(rest, "\n");
+    assert!(
+        ended.duration_since(closed_at) < Duration::from_millis(500),
+        "read ended {:?} after close",
+        ended.duration_since(closed_at)
+    );
+    let (request, gone_at) = went.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(request.starts_with("GET /events "), "{request}");
+    assert!(gone_at.duration_since(closed_at) < Duration::from_millis(500));
+    assert!(stream.closer().is_closed());
+    assert_eq!(stream.read_line(&mut String::new()).unwrap(), 0);
+}
+
+#[test]
+fn dropping_a_stream_lets_the_backend_go_even_while_a_closer_lives() {
+    let (client, went) = quiet_feed();
+    let stream = client.get_stream("/events").unwrap();
+    let closer = stream.closer();
+    drop(stream);
+    assert!(went.recv_timeout(Duration::from_secs(2)).is_ok());
+    assert!(!closer.is_closed());
 }
 
 #[test]

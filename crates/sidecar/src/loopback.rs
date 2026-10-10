@@ -45,7 +45,7 @@ mod client;
 mod discovery;
 
 #[cfg(feature = "loopback-client")]
-pub use client::{Client, ClientOptions, Response, Stream, TransportError};
+pub use client::{Client, ClientOptions, Response, Stream, StreamCloser, TransportError};
 pub use discovery::{discover, DiscoveryError};
 
 /// A secret that admits a caller: made fresh for one run, or read from a discovery file.

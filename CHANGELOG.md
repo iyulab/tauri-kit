@@ -7,6 +7,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- `tauri-kit-sidecar` (`loopback-client`): `Client::get_stream(path)` reads a GET answer as it arrives —
+  an event feed, the shape a page's `EventSource` opens — with the same token, `within` timeout and body
+  limit as `post_json_stream`.
+- `tauri-kit-sidecar` (`loopback-client`): `Stream::closer()` returns a `StreamCloser` (`Send + Sync`,
+  `close()` may be called any number of times) that ends a stream from another thread. The backend sees
+  the disconnect at once, and a read blocked on a quiet stream returns as the end of the body within
+  about 50 ms instead of waiting for the next line. Dropping a `Stream` also shuts its connection.
+
 ## [0.15.0] - 2026-10-10
 
 ### Added
