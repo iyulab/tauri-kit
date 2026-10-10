@@ -7,6 +7,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-11
+
 ### Added
 
 - `tauri-kit-sidecar` (`loopback-client`): `Client::get_stream(path)` reads a GET answer as it arrives —
@@ -460,6 +462,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - `tauri-kit-sidecar`: bundled helper processes without a console window, stopped together with
   everything they start, with readiness waits that notice a crash.
 
+[0.16.0]: https://github.com/iyulab/tauri-kit/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/iyulab/tauri-kit/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/iyulab/tauri-kit/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/iyulab/tauri-kit/compare/v0.12.1...v0.13.0
