@@ -7,6 +7,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- `tauri-kit-webview`: `forwarded_browser_arguments(base)` and `ADDITIONAL_BROWSER_ARGUMENTS_VAR`. A test
+  harness opens WebView2's debugging port through `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`, but current
+  runtimes do not apply that variable to an app that passes browser arguments of its own — which a Tauri
+  app always does — so the port never opened. In a debug build this answers the arguments to give the
+  window itself: `base` (the web view library's defaults, which giving any arguments replaces) followed by
+  the variable's. In a release build, and without the variable, it answers `None`.
+
 ## [0.14.0] - 2026-10-09
 
 ### Changed

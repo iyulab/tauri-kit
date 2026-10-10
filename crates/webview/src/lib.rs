@@ -24,6 +24,14 @@
 //! }
 //! ```
 //!
+//! A third is for test runs of a debug build:
+//!
+//! - **Open the debugging port a test run asks for.** A test harness passes the port in
+//!   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`, but current runtimes do not apply that variable to an
+//!   app that passes browser arguments of its own — and a Tauri app always does, its web view library
+//!   passes defaults. [`forwarded_browser_arguments`] gives the window those arguments itself, in a
+//!   debug build only.
+//!
 //! On macOS and Linux the system web view is part of the operating system: [`runtime`] answers
 //! [`Runtime::System`] and there is no profile to clear.
 
@@ -140,9 +148,74 @@ pub fn forget_form_entries(
     }
 }
 
+/// The environment variable WebView2 reads extra browser arguments from — where test harnesses put
+/// the debugging port they want the window to open.
+pub const ADDITIONAL_BROWSER_ARGUMENTS_VAR: &str = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
+
+/// The browser arguments to give a window of a **debug build**: `base` followed by what
+/// [`ADDITIONAL_BROWSER_ARGUMENTS_VAR`] holds — or `None` when the variable is unset or empty, and
+/// always in a release build, so an installed app never opens a debugging port because of a variable.
+///
+/// Current WebView2 runtimes do not apply the variable to an app that passes browser arguments of its
+/// own, and a Tauri app always does. Giving the window arguments, though, replaces the ones its web
+/// view library passes by default, so `base` repeats them — for a Tauri app on wry,
+/// `--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection`, and
+/// `--autoplay-policy=no-user-gesture-required` while autoplay is on.
+///
+/// For a Tauri window declared with `"create": false` and opened in `setup`:
+///
+/// ```ignore
+/// let mut window = declared.clone();
+/// if let Some(arguments) = tauri_kit_webview::forwarded_browser_arguments(DEFAULT_ARGUMENTS) {
+///     window.additional_browser_args = Some(arguments);
+/// }
+/// tauri::WebviewWindowBuilder::from_config(app.handle(), &window)?.build()?;
+/// ```
+///
+/// "Debug build" is this crate's: a dependency is built with the profile of the app that uses it.
+pub fn forwarded_browser_arguments(base: &str) -> Option<String> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    forward(
+        base,
+        std::env::var(ADDITIONAL_BROWSER_ARGUMENTS_VAR)
+            .ok()
+            .as_deref(),
+    )
+}
+
+fn forward(base: &str, extra: Option<&str>) -> Option<String> {
+    let extra = extra.map(str::trim).filter(|extra| !extra.is_empty())?;
+    let base = base.trim();
+    Some(if base.is_empty() {
+        extra.to_string()
+    } else {
+        format!("{base} {extra}")
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_variable_follows_the_arguments_the_window_would_otherwise_get() {
+        assert_eq!(
+            forward("--disable-features=A", Some("--remote-debugging-port=9222")).as_deref(),
+            Some("--disable-features=A --remote-debugging-port=9222")
+        );
+        assert_eq!(
+            forward("  ", Some(" --remote-debugging-port=9222 ")).as_deref(),
+            Some("--remote-debugging-port=9222")
+        );
+    }
+
+    #[test]
+    fn without_the_variable_the_window_keeps_its_own_arguments() {
+        assert_eq!(forward("--disable-features=A", None), None);
+        assert_eq!(forward("--disable-features=A", Some("   ")), None);
+    }
 
     #[test]
     fn profile_snapshots_are_removed_and_the_rest_of_the_profile_kept() {
