@@ -7,6 +7,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-10
+
 ### Added
 
 - `tauri-kit-webview`: `forwarded_browser_arguments(base)` and `ADDITIONAL_BROWSER_ARGUMENTS_VAR`. A test
@@ -448,6 +450,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - `tauri-kit-sidecar`: bundled helper processes without a console window, stopped together with
   everything they start, with readiness waits that notice a crash.
 
+[0.15.0]: https://github.com/iyulab/tauri-kit/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/iyulab/tauri-kit/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/iyulab/tauri-kit/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/iyulab/tauri-kit/compare/v0.12.0...v0.12.1
