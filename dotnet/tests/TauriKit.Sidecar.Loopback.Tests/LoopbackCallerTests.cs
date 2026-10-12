@@ -110,6 +110,15 @@ public sealed class LoopbackCallerTests : IAsyncLifetime
         Assert.True(LoopbackHost.IsLoopbackHost(new HostString("app-1.localhost", 5100), 5100, localhostSubdomains: true));
         Assert.False(LoopbackHost.IsLoopbackHost(new HostString(".localhost", 5100), 5100, localhostSubdomains: true));
     }
+
+    [Fact]
+    public void A_request_with_no_socket_under_it_is_judged_by_its_name_alone()
+    {
+        // An in-memory test server's connection has local port 0 and its client sends a name with no port.
+        Assert.True(LoopbackHost.IsLoopbackHost(new HostString("localhost"), 0, localhostSubdomains: false));
+        Assert.True(LoopbackHost.IsLoopbackHost(new HostString("127.0.0.1", 5100), 0, localhostSubdomains: false));
+        Assert.False(LoopbackHost.IsLoopbackHost(new HostString("evil.example"), 0, localhostSubdomains: false));
+    }
 }
 
 public sealed class LoopbackCredentialsTests

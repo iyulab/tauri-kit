@@ -55,7 +55,8 @@ public static class LoopbackHost
     /// under <c>localhost</c>, which browsers resolve to this computer themselves). A web page whose own name was
     /// pointed at 127.0.0.1 (DNS rebinding) reaches the port but sends its own name, so this refuses it even on a route
     /// open to anonymous callers. A refused name never reaches a route; authentication, which the application runs
-    /// first, may already have answered 401 to a request that carries no credential.
+    /// first, may already have answered 401 to a request that carries no credential. A request with no socket under it
+    /// — an in-memory test server's, whose local port is 0 — has no port to match, and only its name is checked.
     /// </summary>
     public static IApplicationBuilder UseLoopbackHostCheck(this IApplicationBuilder app, bool localhostSubdomains = false)
     {
@@ -73,7 +74,7 @@ public static class LoopbackHost
 
     internal static bool IsLoopbackHost(HostString host, int localPort, bool localhostSubdomains)
     {
-        if (host.Port != localPort) return false;
+        if (localPort != 0 && host.Port != localPort) return false;
         var name = host.Host;
         return name is "127.0.0.1" or "[::1]"
             || name.Equals("localhost", StringComparison.OrdinalIgnoreCase)

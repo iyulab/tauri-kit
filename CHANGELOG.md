@@ -6,6 +6,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 `0.x`, a minor release may change the API).
 
 ## [Unreleased]
+### Fixed
+- `TauriKit.Sidecar.Loopback.AspNetCore`: `UseLoopbackHostCheck` refused every request an in-memory test
+  server (`WebApplicationFactory`, `TestServer`) sends: its client names `localhost` with no port, and its
+  connection's local port is 0, so the port never matched. A request with no socket under it (local port 0)
+  is now judged by its name alone; a request over a socket still has to name the port it came in on.
 
 ## [0.16.0] - 2026-10-11
 
