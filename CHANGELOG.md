@@ -11,6 +11,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   server (`WebApplicationFactory`, `TestServer`) sends: its client names `localhost` with no port, and its
   connection's local port is 0, so the port never matched. A request with no socket under it (local port 0)
   is now judged by its name alone; a request over a socket still has to name the port it came in on.
+- `tauri-kit-watch`: a file the app wrote (recorded with `OwnWrites::record`) and another program removed
+  within one debounce window was never reported removed — the watch had not yet listed it, so its removal
+  looked like a file that never was. The app shows what it writes, so it went on showing a file that was gone.
+  It is now reported as `Removed`. A file another program made and removed within one window is still not
+  reported.
 
 ## [0.16.0] - 2026-10-11
 

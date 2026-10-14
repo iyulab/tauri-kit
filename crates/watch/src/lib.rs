@@ -575,6 +575,11 @@ impl OwnWrites {
         }
     }
 
+    /// Whether the app recorded writing to `path` (absolute) and no change since has ended the record.
+    fn knows(&self, path: &Path) -> bool {
+        self.lock().contains_key(path)
+    }
+
     /// Whether the file at `path` (absolute) holds what the app last recorded writing there.
     /// A file that differs, is gone, or cannot be read ends the record.
     fn holds_own_write(&self, path: &Path) -> bool {
@@ -743,7 +748,14 @@ impl Resolver {
                         folders.push(path.clone());
                     }
                 }
-                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                // Gone. The folder's listing says whether it was there — but a file the app wrote is there
+                // for the app whether or not the watch heard of it before another program removed it, within
+                // one debounce window: the app shows what it wrote, and must hear that it is gone.
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                    if self.own.as_ref().is_some_and(|own| own.knows(path)) {
+                        self.removed(path, &mut batch);
+                    }
+                }
                 // A file that changed — or one there but unreadable for now, held open by another
                 // program: it changed too.
                 _ => self.written(path, &mut batch),
@@ -962,6 +974,53 @@ mod tests {
             path: path.to_path_buf(),
             kind,
         }
+    }
+
+    #[test]
+    fn a_file_the_app_wrote_and_another_program_removed_before_the_watch_heard_of_it_is_reported_removed(
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let own = OwnWrites::new();
+        let mut r = Resolver::new(
+            resolved(dir.path()).unwrap(),
+            Rules::default(),
+            Some(own.clone()),
+        );
+        let root = r.root.clone();
+        // The app writes a file and shows it; another program removes it within the same debounce window.
+        let path = root.join("new.md");
+        own.record(&path, b"x");
+        fs::write(&path, "x").unwrap();
+        fs::remove_file(&path).unwrap();
+        let changes = r.changes(&[
+            event(EventKind::Create(CreateKind::File), path.clone()),
+            event(
+                EventKind::Remove(notify::event::RemoveKind::File),
+                path.clone(),
+            ),
+        ]);
+        assert_eq!(
+            changes,
+            vec![change(Path::new("new.md"), ChangeKind::Removed)]
+        );
+        // Reported once: the record went with it.
+        assert!(!own.knows(&path));
+    }
+
+    #[test]
+    fn a_file_another_program_made_and_removed_before_the_watch_heard_of_it_never_was() {
+        let dir = tempfile::tempdir().unwrap();
+        let own = OwnWrites::new();
+        let mut r = Resolver::new(resolved(dir.path()).unwrap(), Rules::default(), Some(own));
+        let root = r.root.clone();
+        let path = root.join("scratch.md");
+        fs::write(&path, "x").unwrap();
+        fs::remove_file(&path).unwrap();
+        let changes = r.changes(&[
+            event(EventKind::Create(CreateKind::File), path.clone()),
+            event(EventKind::Remove(notify::event::RemoveKind::File), path),
+        ]);
+        assert_eq!(changes, vec![]);
     }
 
     #[test]
