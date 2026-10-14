@@ -6,6 +6,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 `0.x`, a minor release may change the API).
 
 ## [Unreleased]
+
+## [0.16.1] - 2026-10-14
+
 ### Fixed
 - `TauriKit.Sidecar.Loopback.AspNetCore`: `UseLoopbackHostCheck` refused every request an in-memory test
   server (`WebApplicationFactory`, `TestServer`) sends: its client names `localhost` with no port, and its
@@ -472,6 +475,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - `tauri-kit-sidecar`: bundled helper processes without a console window, stopped together with
   everything they start, with readiness waits that notice a crash.
 
+[0.16.1]: https://github.com/iyulab/tauri-kit/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/iyulab/tauri-kit/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/iyulab/tauri-kit/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/iyulab/tauri-kit/compare/v0.13.0...v0.14.0
