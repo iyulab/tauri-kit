@@ -93,13 +93,40 @@ pub enum Output {
     /// a log that cannot be written never stops the sidecar.
     Files { stdout: PathBuf, stderr: PathBuf },
     /// stdout is read line by line for [`Sidecar::wait_line`], and drained on a background thread
-    /// for as long as the sidecar runs, so the child never blocks on a full pipe. Each stream is
-    /// also appended to a file, as with [`Output::Files`] (parent directories included), or not
-    /// kept: `stdout` gets every line, the ones `wait_line` takes included.
+    /// for as long as the sidecar runs, so the child never blocks on a full pipe. stdout is also
+    /// appended to a file, as with [`Output::Files`] (parent directories included), or not kept —
+    /// every line, the ones `wait_line` takes included. stderr goes where its [`Sink`] says.
     Lines {
         stdout: Option<PathBuf>,
-        stderr: Option<PathBuf>,
+        stderr: Sink,
     },
+}
+
+/// Where a stream the kit does not read goes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Sink {
+    /// Discarded.
+    #[default]
+    Discard,
+    /// Appended line by line to this file, as with [`Output::Files`] (parent directories included).
+    File(PathBuf),
+    /// Written where the app's own stream goes — the terminal the app was started from, while
+    /// developing. An app built without a console (a released GUI app) has nowhere to write it,
+    /// so there it is as good as discarded: use [`Sink::File`] for a log that outlives the session.
+    Inherit,
+}
+
+impl From<PathBuf> for Sink {
+    fn from(path: PathBuf) -> Self {
+        Sink::File(path)
+    }
+}
+
+impl From<Option<PathBuf>> for Sink {
+    /// A file when there is a path, otherwise discarded.
+    fn from(path: Option<PathBuf>) -> Self {
+        path.map_or(Sink::Discard, Sink::File)
+    }
 }
 
 /// How waiting for a readiness line ended.
@@ -156,10 +183,10 @@ impl Sidecar {
             }
             Output::Lines { stderr, .. } => {
                 cmd.stdout(Stdio::piped());
-                cmd.stderr(if stderr.is_some() {
-                    Stdio::piped()
-                } else {
-                    Stdio::null()
+                cmd.stderr(match stderr {
+                    Sink::Discard => Stdio::null(),
+                    Sink::File(_) => Stdio::piped(),
+                    Sink::Inherit => Stdio::inherit(),
                 });
             }
         }
@@ -188,7 +215,7 @@ impl Sidecar {
                 if let Some(out) = child.stdout.take() {
                     lines = Some(read_lines(out, stdout));
                 }
-                if let (Some(err), Some(path)) = (child.stderr.take(), stderr) {
+                if let (Some(err), Sink::File(path)) = (child.stderr.take(), stderr) {
                     drain(err, path);
                 }
             }

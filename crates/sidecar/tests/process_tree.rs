@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::Command;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
-use tauri_kit_sidecar::{LineReadiness, Output, Readiness, Sidecar};
+use tauri_kit_sidecar::{LineReadiness, Output, Readiness, Sidecar, Sink};
 
 /// A shell command line, passed verbatim.
 fn shell(line: &str) -> Command {
@@ -277,7 +277,7 @@ fn a_readiness_line_is_returned_as_soon_as_it_is_printed() {
         shell(line),
         Output::Lines {
             stdout: None,
-            stderr: None,
+            stderr: Sink::Discard,
         },
     )
     .unwrap();
@@ -299,7 +299,7 @@ fn a_crash_before_the_readiness_line_is_reported_at_once() {
         shell("echo starting& exit 4"),
         Output::Lines {
             stdout: None,
-            stderr: None,
+            stderr: Sink::Discard,
         },
     )
     .unwrap();
@@ -319,7 +319,7 @@ fn waiting_for_a_line_stops_at_the_deadline() {
         long_running(),
         Output::Lines {
             stdout: None,
-            stderr: None,
+            stderr: Sink::Discard,
         },
     )
     .unwrap();
@@ -342,7 +342,7 @@ fn output_after_the_readiness_line_keeps_being_drained() {
         shell(line),
         Output::Lines {
             stdout: None,
-            stderr: None,
+            stderr: Sink::Discard,
         },
     )
     .unwrap();
@@ -370,4 +370,52 @@ fn waiting_for_a_line_needs_lines_output() {
         .wait_line(Duration::from_millis(10), |_| true)
         .unwrap_err();
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+/// Set when this test binary runs as the app in `stderr_can_go_where_the_apps_own_goes`.
+const AS_APP: &str = "TAURI_KIT_TEST_AS_APP";
+
+#[test]
+fn stderr_can_go_where_the_apps_own_goes() {
+    if std::env::var_os(AS_APP).is_some() {
+        // The app: its stderr is the pipe the outer test reads.
+        let mut sidecar = Sidecar::spawn(
+            shell("echo ready& echo oops-from-the-sidecar 1>&2"),
+            Output::Lines {
+                stdout: None,
+                stderr: Sink::Inherit,
+            },
+        )
+        .unwrap();
+        sidecar
+            .wait_ready(Duration::from_secs(10), Duration::from_millis(20), || false)
+            .unwrap();
+        return;
+    }
+    let app = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "stderr_can_go_where_the_apps_own_goes",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(AS_APP, "1")
+        .output()
+        .unwrap();
+    assert!(app.status.success(), "{app:?}");
+    assert!(
+        String::from_utf8_lossy(&app.stderr).contains("oops-from-the-sidecar"),
+        "{}",
+        String::from_utf8_lossy(&app.stderr)
+    );
+}
+
+#[test]
+fn a_path_or_none_converts_to_a_sink() {
+    assert_eq!(
+        Sink::from(Some(std::path::PathBuf::from("err.log"))),
+        Sink::File("err.log".into())
+    );
+    assert_eq!(Sink::from(None::<std::path::PathBuf>), Sink::Discard);
+    assert_eq!(Sink::default(), Sink::Discard);
 }

@@ -7,6 +7,17 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Changed
+- `tauri-kit-sidecar` (breaking): where a sidecar's stderr goes when the kit reads its stdout line by line is now a
+  `Sink` — `Discard`, `File(path)` or `Inherit` — instead of an optional path: `Output::Lines { stderr: Sink }` and
+  `LoopbackOptions::stderr: Sink` (default `Discard`, as before). `Sink` converts from `PathBuf` and from
+  `Option<PathBuf>` (`None` is `Discard`), so moving is `options.stderr = path.into()`.
+
+### Added
+- `Sink::Inherit`: the sidecar's stderr goes where the app's own goes — the terminal the app was started from while
+  developing, so a helper's log is in front of the developer instead of in a file. An app built without a console (a
+  released GUI app) has nowhere to write it; there it is as good as discarded, so keep `Sink::File` for release builds.
+
 ### Security
 - The repository's lock file moves `rustls` from 0.23.45 to 0.23.46, which fixes RUSTSEC-2026-0346 (session
   `Debug` output exposes TLS secrets), RUSTSEC-2026-0347 (buffered data sent after an ECH rejection),

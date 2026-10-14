@@ -38,7 +38,7 @@ use std::fmt;
 use std::process::Command;
 use std::time::Duration;
 
-use crate::{LineReadiness, Output, Sidecar};
+use crate::{LineReadiness, Output, Sidecar, Sink};
 
 #[cfg(feature = "loopback-client")]
 mod client;
@@ -166,8 +166,9 @@ pub struct LoopbackOptions {
     /// Where the backend's stdout is appended — every line, the readiness line included — if
     /// anywhere.
     pub stdout: Option<std::path::PathBuf>,
-    /// Where the backend's stderr is appended, if anywhere.
-    pub stderr: Option<std::path::PathBuf>,
+    /// Where the backend's stderr goes: discarded by default, appended to a file, or — while
+    /// developing — to the app's own stderr ([`Sink`]).
+    pub stderr: Sink,
     /// How the [`Client`] [`Loopback::start`] makes behaves.
     #[cfg(feature = "loopback-client")]
     pub client: ClientOptions,
@@ -182,7 +183,7 @@ impl LoopbackOptions {
             ready_prefix: ready_prefix.into(),
             ready_timeout: Duration::from_secs(30),
             stdout: None,
-            stderr: None,
+            stderr: Sink::Discard,
             #[cfg(feature = "loopback-client")]
             client: ClientOptions::default(),
         }
