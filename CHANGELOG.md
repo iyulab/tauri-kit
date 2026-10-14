@@ -7,6 +7,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Security
+- The repository's lock file moves `rustls` from 0.23.45 to 0.23.46, which fixes RUSTSEC-2026-0346 (session
+  `Debug` output exposes TLS secrets), RUSTSEC-2026-0347 (buffered data sent after an ECH rejection),
+  RUSTSEC-2026-0348 (up to 1 GiB allocated by certificate decompression before authentication) and
+  RUSTSEC-2026-0349 (an unauthenticated ServerHello downgrades later connections). Only the
+  `tauri-kit-diagnostics` feature `appinsights-rustls` reaches `rustls` (through `ureq`). A library's lock
+  file does not bind its consumers: an app that enables that feature runs `cargo update -p rustls` in its
+  own workspace.
+
 ## [0.16.1] - 2026-10-14
 
 ### Fixed
