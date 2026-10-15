@@ -155,6 +155,12 @@ pub enum Readiness {
 ///
 /// Dropping it stops the whole process tree. On Windows the tree is also stopped by the OS when
 /// the app itself exits or crashes, because the job object is closed with the app.
+///
+/// To watch a sidecar for its whole life while any thread may stop it, keep it in a
+/// `Mutex<Option<Sidecar>>`: a watcher locks it only for [`Sidecar::try_status`], which does not
+/// wait, and whoever stops it takes it out and calls [`Sidecar::shutdown`] outside the lock. The
+/// waits ([`Sidecar::wait_ready`], [`Sidecar::wait_line`]) hold the sidecar for as long as they
+/// wait, so they belong to startup.
 pub struct Sidecar {
     child: Child,
     tree: tree::Tree,
