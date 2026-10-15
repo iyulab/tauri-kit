@@ -21,13 +21,13 @@ More capabilities will be added as separate crates. What belongs here, and what 
 
 ```toml
 [dependencies]
-tauri-kit-fs = "0.16"
-tauri-kit-credentials = "0.16"
-tauri-kit-sidecar = "0.16"
-tauri-kit-watch = "0.16"
-tauri-kit-diagnostics = "0.16"
-tauri-kit-webview = "0.16"
-tauri-kit-state = "0.16"
+tauri-kit-fs = "0.17"
+tauri-kit-credentials = "0.17"
+tauri-kit-sidecar = "0.17"
+tauri-kit-watch = "0.17"
+tauri-kit-diagnostics = "0.17"
+tauri-kit-webview = "0.17"
+tauri-kit-state = "0.17"
 ```
 
 The crates are published to crates.io. Depending on them from this repository instead
