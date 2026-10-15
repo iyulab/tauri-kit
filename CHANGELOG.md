@@ -7,6 +7,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-16
+
 ### Changed
 - `tauri-kit-state` (breaking): a format step is handed what the app knows about the state directory — the folder it is
   kept for, say, which the directory's name (a key) does not give back. `Step<C = ()>` is now `fn(&Path, &C)`,
@@ -517,6 +519,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - `tauri-kit-sidecar`: bundled helper processes without a console window, stopped together with
   everything they start, with readiness waits that notice a crash.
 
+[0.18.0]: https://github.com/iyulab/tauri-kit/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/iyulab/tauri-kit/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/iyulab/tauri-kit/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/iyulab/tauri-kit/compare/v0.15.0...v0.16.0
