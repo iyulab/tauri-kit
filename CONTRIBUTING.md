@@ -46,3 +46,18 @@ declared minimum compiler (`rust-version`).
   `## [Unreleased]`, in the same commit. Other apps learn what changed from it.
 - **Versioning** — the crates share one version. While it is `0.x`, a minor bump may break the
   API; a patch bump does not.
+
+## Cutting a release
+
+One commit, `chore: release <version>`, moves every version line together:
+
+1. `version` in the root `Cargo.toml`, and the `tauri-kit-fs` requirement in the crates that depend on it
+   (`crates/diagnostics`, `crates/state`, `crates/watch`).
+2. `<Version>` in `dotnet/Directory.Build.props`.
+3. The README: the tag in the git-dependency example and, on a minor bump, the `"0.x"` requirements in the
+   usage snippet.
+4. `Cargo.lock` (`cargo update -w`) and a `## [<version>] - <date>` heading under `## [Unreleased]` in the
+   CHANGELOG, with its compare link at the bottom.
+
+Then tag `v<version>`, push the branch and the tag, run `gh workflow run publish-nuget.yml --ref v<version>`,
+and `cargo publish -p <crate>` for each crate, `tauri-kit-fs` first.
