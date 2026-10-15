@@ -5,12 +5,14 @@ use std::path::{Path, PathBuf};
 pub const FORMAT_FILE: &str = "format";
 
 /// One step between formats: it brings the files in the state directory it is given from format
-/// `i` to `i + 1`.
+/// `i` to `i + 1`, with what the app knows about that directory (`C`) — the folder it is kept
+/// for, say, which the directory's name alone does not give back. A step that needs nothing takes
+/// `()`.
 ///
 /// The format number is written only after the last step, so a step cut short — a crash, a full
 /// disk — runs again the next time. Every step must therefore be safe to run twice, and must write
 /// what it makes before it removes what it replaces.
-pub type Step = fn(&Path) -> io::Result<()>;
+pub type Step<C = ()> = fn(&Path, &C) -> io::Result<()>;
 
 /// The format of the files in a state directory, as [`Versioned::read`] finds it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,23 +33,49 @@ pub enum Format {
 /// ```
 /// use tauri_kit_state::{Format, Step, Versioned};
 ///
-/// const STEPS: [Step; 1] = [|_| Ok(())];
+/// const STEPS: [Step; 1] = [|_, _| Ok(())];
 /// const FORMATS: Versioned = Versioned::new(&STEPS);
 ///
 /// let dir = tempfile::tempdir()?;
 /// assert_eq!(FORMATS.read(dir.path())?, Format::Known(0));
-/// assert!(FORMATS.bring_up_to_date(dir.path(), |path, bytes| std::fs::write(path, bytes))?);
+/// assert!(FORMATS.bring_up_to_date(dir.path(), &(), |path, bytes| std::fs::write(path, bytes))?);
 /// assert_eq!(FORMATS.read(dir.path())?, Format::Known(1));
 /// # Ok::<(), std::io::Error>(())
 /// ```
-#[derive(Debug, Clone, Copy)]
-pub struct Versioned<'s> {
-    steps: &'s [Step],
+///
+/// A step that needs to know more than the directory — here, the folder the state is kept for — is
+/// handed it:
+///
+/// ```
+/// use std::path::Path;
+/// use tauri_kit_state::{Step, Versioned};
+///
+/// const STEPS: [Step<Path>; 1] = [|dir, folder| {
+///     std::fs::write(dir.join("for"), folder.to_string_lossy().as_bytes())
+/// }];
+/// const FORMATS: Versioned<Path> = Versioned::new(&STEPS);
+///
+/// let dir = tempfile::tempdir()?;
+/// FORMATS.bring_up_to_date(dir.path(), Path::new("Projects/garden"), |p, b| std::fs::write(p, b))?;
+/// assert_eq!(std::fs::read_to_string(dir.path().join("for"))?, "Projects/garden");
+/// # Ok::<(), std::io::Error>(())
+/// ```
+#[derive(Debug)]
+pub struct Versioned<'s, C: ?Sized = ()> {
+    steps: &'s [Step<C>],
 }
 
-impl<'s> Versioned<'s> {
+impl<C: ?Sized> Clone for Versioned<'_, C> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<C: ?Sized> Copy for Versioned<'_, C> {}
+
+impl<'s, C: ?Sized> Versioned<'s, C> {
     /// The formats reached by `steps`, in order: `steps[i]` brings format `i` to `i + 1`.
-    pub const fn new(steps: &'s [Step]) -> Self {
+    pub const fn new(steps: &'s [Step<C>]) -> Self {
         Self { steps }
     }
 
@@ -77,13 +105,14 @@ impl<'s> Versioned<'s> {
         Ok(self.read(dir)? != Format::Unknown)
     }
 
-    /// Brings the files in `dir` to the current format, running the steps from its format on and
-    /// then writing the format number with `write` (which should write atomically — see
-    /// `tauri_kit_fs::write_atomic`). Returns `false`, having changed nothing, when the format is
-    /// [unknown](Format::Unknown).
+    /// Brings the files in `dir` to the current format, running the steps from its format on —
+    /// each handed `context` — and then writing the format number with `write` (which should write
+    /// atomically — see `tauri_kit_fs::write_atomic`). Returns `false`, having changed nothing,
+    /// when the format is [unknown](Format::Unknown).
     pub fn bring_up_to_date(
         &self,
         dir: &Path,
+        context: &C,
         write: impl FnOnce(&Path, &[u8]) -> io::Result<()>,
     ) -> io::Result<bool> {
         let from = match self.read(dir)? {
@@ -92,7 +121,7 @@ impl<'s> Versioned<'s> {
             Format::Known(n) => n,
         };
         for step in &self.steps[from as usize..] {
-            step(dir)?;
+            step(dir, context)?;
         }
         write(
             &dir.join(FORMAT_FILE),
@@ -128,7 +157,7 @@ mod tests {
     use super::*;
     use std::cell::Cell;
 
-    const STEPS: [Step; 1] = [|_| Ok(())];
+    const STEPS: [Step; 1] = [|_, _| Ok(())];
     const FORMATS: Versioned = Versioned::new(&STEPS);
 
     fn plain_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -141,7 +170,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("state");
         assert_eq!(FORMATS.read(&dir).unwrap(), Format::Known(0));
-        assert!(FORMATS.bring_up_to_date(&dir, plain_write).unwrap());
+        assert!(FORMATS.bring_up_to_date(&dir, &(), plain_write).unwrap());
         assert_eq!(std::fs::read_to_string(dir.join(FORMAT_FILE)).unwrap(), "1");
         assert_eq!(FORMATS.read(&dir).unwrap(), Format::Known(1));
     }
@@ -149,10 +178,12 @@ mod tests {
     #[test]
     fn bringing_up_to_date_again_writes_nothing() {
         let tmp = tempfile::tempdir().unwrap();
-        FORMATS.bring_up_to_date(tmp.path(), plain_write).unwrap();
+        FORMATS
+            .bring_up_to_date(tmp.path(), &(), plain_write)
+            .unwrap();
         let wrote = Cell::new(false);
         assert!(FORMATS
-            .bring_up_to_date(tmp.path(), |_, _| {
+            .bring_up_to_date(tmp.path(), &(), |_, _| {
                 wrote.set(true);
                 Ok(())
             })
@@ -163,12 +194,12 @@ mod tests {
     #[test]
     fn steps_run_from_the_format_found_in_order() {
         const STEPS: [Step; 3] = [
-            |dir| std::fs::write(dir.join("log"), "0"),
-            |dir| {
+            |dir, _| std::fs::write(dir.join("log"), "0"),
+            |dir, _| {
                 let log = std::fs::read_to_string(dir.join("log")).unwrap_or_default();
                 std::fs::write(dir.join("log"), log + "1")
             },
-            |dir| {
+            |dir, _| {
                 let log = std::fs::read_to_string(dir.join("log")).unwrap_or_default();
                 std::fs::write(dir.join("log"), log + "2")
             },
@@ -176,7 +207,9 @@ mod tests {
         let formats = Versioned::new(&STEPS);
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join(FORMAT_FILE), "1").unwrap();
-        assert!(formats.bring_up_to_date(tmp.path(), plain_write).unwrap());
+        assert!(formats
+            .bring_up_to_date(tmp.path(), &(), plain_write)
+            .unwrap());
         assert_eq!(
             std::fs::read_to_string(tmp.path().join("log")).unwrap(),
             "12"
@@ -186,10 +219,12 @@ mod tests {
 
     #[test]
     fn a_step_that_fails_leaves_the_format_where_it_was() {
-        const STEPS: [Step; 2] = [|_| Ok(()), |_| Err(io::Error::other("disk full"))];
+        const STEPS: [Step; 2] = [|_, _| Ok(()), |_, _| Err(io::Error::other("disk full"))];
         let formats = Versioned::new(&STEPS);
         let tmp = tempfile::tempdir().unwrap();
-        assert!(formats.bring_up_to_date(tmp.path(), plain_write).is_err());
+        assert!(formats
+            .bring_up_to_date(tmp.path(), &(), plain_write)
+            .is_err());
         assert_eq!(formats.read(tmp.path()).unwrap(), Format::Known(0));
     }
 
@@ -200,7 +235,7 @@ mod tests {
         std::fs::write(dir.join(FORMAT_FILE), "2").unwrap();
         std::fs::write(dir.join("order.json"), b"{\"from\":\"a newer release\"}").unwrap();
 
-        assert!(!FORMATS.bring_up_to_date(dir, plain_write).unwrap());
+        assert!(!FORMATS.bring_up_to_date(dir, &(), plain_write).unwrap());
         assert_eq!(std::fs::read_to_string(dir.join(FORMAT_FILE)).unwrap(), "2");
         assert_eq!(
             std::fs::read(dir.join("order.json")).unwrap(),

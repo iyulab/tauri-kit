@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Changed
+- `tauri-kit-state` (breaking): a format step is handed what the app knows about the state directory — the folder it is
+  kept for, say, which the directory's name (a key) does not give back. `Step<C = ()>` is now `fn(&Path, &C)`,
+  `Versioned<'s, C = ()>` keeps steps of that kind, and `bring_up_to_date(dir, context, write)` hands `context` to every
+  step it runs. A step that needs nothing takes `()`: write steps as `|dir, _| …` instead of `|dir| …`, and call
+  `bring_up_to_date(dir, &(), write)`. `read`, `writable` and `current` are unchanged.
+
 ### Fixed
 - `TauriKit.Sidecar.Loopback.AspNetCore`: a request refused for want of a credential is answered with
   `WWW-Authenticate: Bearer` (RFC 6750), and `Bearer error="invalid_token"` when the credential it sent is not one the
