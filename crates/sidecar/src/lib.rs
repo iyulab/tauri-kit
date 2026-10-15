@@ -346,6 +346,85 @@ impl Drop for Sidecar {
     }
 }
 
+/// How a [`run`] ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ran {
+    /// The process exited in time; what it printed is all here.
+    Exited(std::process::Output),
+    /// The deadline passed first. The process and everything it started were stopped.
+    TimedOut,
+}
+
+/// Runs `cmd` to the end, up to `deadline`, and hands back its exit status and everything it
+/// printed — for a helper that does one job and exits, such as a converter or a renderer.
+///
+/// The same care as [`Sidecar`]: no console window, stdin closed, and the child placed where its
+/// whole tree can be stopped. Both streams are read on background threads, so a chatty child never
+/// blocks on a full pipe while it is waited for. When the deadline passes, the whole tree is
+/// stopped — not only the child, whose own children would otherwise live on and keep its output
+/// pipes open — and the run returns at once.
+///
+/// What it printed is kept in memory: for output that is a report, not a stream of data.
+pub fn run(mut cmd: Command, deadline: Duration) -> io::Result<Ran> {
+    hide_console(&mut cmd);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    tree::prepare(&mut cmd);
+    let mut child = cmd.spawn()?;
+    let tree = match tree::adopt(&child) {
+        Ok(tree) => tree,
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(e);
+        }
+    };
+    let stdout = child.stdout.take().map(collect);
+    let stderr = child.stderr.take().map(collect);
+
+    let until = Instant::now() + deadline;
+    let status = loop {
+        if let Some(status) = tree::exit_status(&mut child)? {
+            break Some(status);
+        }
+        if Instant::now() >= until {
+            break None;
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+    // Exited or not, what it started may still be running and holding the pipes open.
+    tree.kill(&mut child)?;
+    let status = match status {
+        Some(_) => child.wait()?,
+        None => {
+            child.wait()?;
+            return Ok(Ran::TimedOut);
+        }
+    };
+    let take = |collected: Option<Receiver<Vec<u8>>>| {
+        collected
+            .and_then(|r| r.recv_timeout(Duration::from_secs(1)).ok())
+            .unwrap_or_default()
+    };
+    Ok(Ran::Exited(std::process::Output {
+        status,
+        stdout: take(stdout),
+        stderr: take(stderr),
+    }))
+}
+
+/// Reads a stream to its end on a background thread; the bytes arrive once it closes.
+fn collect(mut stream: impl Read + Send + 'static) -> Receiver<Vec<u8>> {
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = stream.read_to_end(&mut bytes);
+        let _ = sender.send(bytes);
+    });
+    receiver
+}
+
 /// The file a stream is appended to, its folder created first. `None` when it cannot be opened.
 fn append_to(path: &Path) -> Option<File> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {

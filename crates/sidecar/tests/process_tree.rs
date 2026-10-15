@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::Command;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
-use tauri_kit_sidecar::{LineReadiness, Output, Readiness, Sidecar, Sink};
+use tauri_kit_sidecar::{run, LineReadiness, Output, Ran, Readiness, Sidecar, Sink};
 
 /// A shell command line, passed verbatim.
 fn shell(line: &str) -> Command {
@@ -418,4 +418,52 @@ fn a_path_or_none_converts_to_a_sink() {
     );
     assert_eq!(Sink::from(None::<std::path::PathBuf>), Sink::Discard);
     assert_eq!(Sink::default(), Sink::Discard);
+}
+
+#[test]
+fn a_run_hands_back_what_the_process_printed_and_how_it_ended() {
+    let line = if cfg!(windows) {
+        "echo out& echo err 1>&2& exit 4"
+    } else {
+        "echo out; echo err 1>&2; exit 4"
+    };
+    let ran = run(shell(line), Duration::from_secs(20)).unwrap();
+    let Ran::Exited(output) = ran else {
+        panic!("timed out")
+    };
+    assert_eq!(output.status.code(), Some(4));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "out");
+    assert_eq!(String::from_utf8_lossy(&output.stderr).trim(), "err");
+}
+
+#[test]
+fn a_run_reads_more_than_a_pipe_holds_while_it_waits() {
+    let line = if cfg!(windows) {
+        "for /L %i in (1,1,20000) do @echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 1>&2"
+    } else {
+        "i=0; while [ $i -lt 20000 ]; do echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 1>&2; i=$((i+1)); done"
+    };
+    let Ran::Exited(output) = run(shell(line), Duration::from_secs(60)).unwrap() else {
+        panic!("the child blocked on a full pipe")
+    };
+    assert!(output.stderr.len() > 20000 * 48, "{}", output.stderr.len());
+}
+
+#[test]
+fn a_run_past_its_deadline_stops_what_the_process_started_and_returns_at_once() {
+    let dir = temp_dir("run-deadline");
+    let (started, marker) = (dir.join("started"), dir.join("marker"));
+    let began = Instant::now();
+    // The grandchild holds the output pipes open; returning must not wait for it.
+    let ran = run(with_grandchild(&started, &marker), Duration::from_secs(1)).unwrap();
+    assert_eq!(ran, Ran::TimedOut);
+    assert!(
+        began.elapsed() < Duration::from_secs(10),
+        "waited on the output pipes"
+    );
+    sleep(Duration::from_secs(4));
+    assert!(
+        !marker.exists(),
+        "a process the run started outlived its deadline"
+    );
 }

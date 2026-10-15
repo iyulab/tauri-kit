@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+- `tauri-kit-sidecar`: `run(cmd, deadline)` runs a helper that does one job and exits — a converter, a renderer — and
+  hands back `Ran::Exited(std::process::Output)` or `Ran::TimedOut`. Same care as `Sidecar`: no console window, stdin
+  closed, both streams read while it is waited for. When the deadline passes the whole process tree is stopped, not only
+  the child, and the call returns at once instead of waiting on output pipes a grandchild still holds open.
+
 ## [0.18.0] - 2026-10-16
 
 ### Changed
