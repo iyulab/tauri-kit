@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Fixed
+- `TauriKit.Sidecar.Loopback.AspNetCore`: a request refused for want of a credential is answered with
+  `WWW-Authenticate: Bearer` (RFC 6750), and `Bearer error="invalid_token"` when the credential it sent is not one the
+  backend accepts — before, a 401 carried no hint of what was asked.
+
 ## [0.17.0] - 2026-10-15
 
 ### Changed

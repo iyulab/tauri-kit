@@ -88,4 +88,17 @@ internal sealed class LoopbackBearerHandler(
         var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, LoopbackAuthentication.Scheme));
         return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(principal, LoopbackAuthentication.Scheme)));
     }
+
+    /// <summary>
+    /// Answers 401 with <c>WWW-Authenticate: Bearer</c> (RFC 6750) — with <c>error="invalid_token"</c> when a credential
+    /// was sent and refused — so a caller can tell what is asked of it instead of reading an empty answer.
+    /// </summary>
+    protected override Task HandleChallengeAsync(AuthenticationProperties properties)
+    {
+        Response.StatusCode = StatusCodes.Status401Unauthorized;
+        Response.Headers.WWWAuthenticate = Request.Headers.Authorization.ToString().StartsWith(Prefix, StringComparison.Ordinal)
+            ? "Bearer error=\"invalid_token\""
+            : "Bearer";
+        return Task.CompletedTask;
+    }
 }

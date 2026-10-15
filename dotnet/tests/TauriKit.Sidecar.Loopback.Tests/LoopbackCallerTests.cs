@@ -44,11 +44,19 @@ public sealed class LoopbackCallerTests : IAsyncLifetime
     {
         using var anonymous = Client();
         using (var health = await anonymous.GetAsync(new Uri("/health", UriKind.Relative), Cancel)) Assert.Equal(HttpStatusCode.OK, health.StatusCode);
-        using (var who = await anonymous.GetAsync(new Uri("/who", UriKind.Relative), Cancel)) Assert.Equal(HttpStatusCode.Unauthorized, who.StatusCode);
+        using (var who = await anonymous.GetAsync(new Uri("/who", UriKind.Relative), Cancel))
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, who.StatusCode);
+            Assert.Equal("Bearer", who.Headers.WwwAuthenticate.ToString()); // what is asked of the caller (RFC 6750)
+        }
         // A path no route serves says nothing about which paths exist.
         using (var none = await anonymous.GetAsync(new Uri("/no-such-route", UriKind.Relative), Cancel)) Assert.Equal(HttpStatusCode.Unauthorized, none.StatusCode);
         using var stranger = Client(new string('x', 43));
-        using (var refused = await stranger.GetAsync(new Uri("/who", UriKind.Relative), Cancel)) Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
+        using (var refused = await stranger.GetAsync(new Uri("/who", UriKind.Relative), Cancel))
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
+            Assert.Equal("Bearer error=\"invalid_token\"", refused.Headers.WwwAuthenticate.ToString());
+        }
     }
 
     [Fact]
