@@ -18,6 +18,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   developing, so a helper's log is in front of the developer instead of in a file. An app built without a console (a
   released GUI app) has nowhere to write it; there it is as good as discarded, so keep `Sink::File` for release builds.
 
+### Fixed
+- `TauriKit.Sidecar.Loopback`: `DiscoveryFile.Publish` no longer fails when a caller has the discovery file open at the
+  moment it is replaced. On Windows a file cannot be replaced while any handle to it is open, whatever share mode the
+  reader asked for — and the backend's callers are exactly the processes that read the file, often polling it (and a
+  stale one left by an earlier run) while the backend starts. The publish threw `UnauthorizedAccessException`, so a
+  backend that logged and carried on was running where no caller could find it. The replace is now retried for up to
+  three seconds; a reader that keeps the file open longer still fails the publish, and no temporary file is left behind.
+
 ### Security
 - The repository's lock file moves `rustls` from 0.23.45 to 0.23.46, which fixes RUSTSEC-2026-0346 (session
   `Debug` output exposes TLS secrets), RUSTSEC-2026-0347 (buffered data sent after an ECH rejection),

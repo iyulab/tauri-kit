@@ -60,7 +60,17 @@ public static class DiscoveryFile
     /// Publishes this process as listening on <paramref name="port"/> with <paramref name="token"/>, replacing what
     /// <paramref name="path"/> held (its folder is created if missing), and returns what was written.
     /// </summary>
-    public static LoopbackDiscovery Publish(string path, int port, string token)
+    public static LoopbackDiscovery Publish(string path, int port, string token) => Publish(path, port, token, ReplaceTimeout);
+
+    /// <summary>
+    /// How long a publish keeps trying to replace a file another process has open. On Windows a file cannot be replaced
+    /// while any handle to it is open, whatever share mode the reader asked for — and the backend's callers are exactly the
+    /// processes that read it, often polling it while the backend starts. They hold it for moments, so the replace is
+    /// retried for this long before the failure is reported.
+    /// </summary>
+    internal static readonly TimeSpan ReplaceTimeout = TimeSpan.FromSeconds(3);
+
+    internal static LoopbackDiscovery Publish(string path, int port, string token, TimeSpan replaceTimeout)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
         ArgumentNullException.ThrowIfNull(token);
@@ -74,7 +84,7 @@ public static class DiscoveryFile
         {
             using (var stream = CreateOwnerOnly(temporary))
                 JsonSerializer.Serialize(stream, record, LoopbackJson.Default.LoopbackDiscovery);
-            File.Move(temporary, full, overwrite: true);
+            ReplaceWithRetry(temporary, full, replaceTimeout);
         }
         catch
         {
@@ -83,6 +93,25 @@ public static class DiscoveryFile
         }
 
         return record;
+    }
+
+    private static void ReplaceWithRetry(string temporary, string full, TimeSpan timeout)
+    {
+        var deadline = Stopwatch.GetTimestamp() + (long)(timeout.TotalSeconds * Stopwatch.Frequency);
+        var delay = TimeSpan.FromMilliseconds(10);
+        while (true)
+        {
+            try
+            {
+                File.Move(temporary, full, overwrite: true);
+                return;
+            }
+            catch (Exception e) when (e is UnauthorizedAccessException or IOException && Stopwatch.GetTimestamp() < deadline)
+            {
+                Thread.Sleep(delay);
+                delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 200));
+            }
+        }
     }
 
     /// <summary>

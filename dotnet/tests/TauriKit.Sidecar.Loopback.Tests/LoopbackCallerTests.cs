@@ -191,6 +191,42 @@ public sealed class DiscoveryFileTests : IDisposable
     }
 
     [Fact]
+    public async Task A_caller_reading_the_file_while_it_is_replaced_delays_the_publish_instead_of_failing_it()
+    {
+        // A caller polling the file while the backend starts holds it open for a moment; on Windows the replace fails for as
+        // long as it does.
+        DiscoveryFile.Publish(FilePath, 5100, new string('a', 32));
+        var reader = File.Open(FilePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var released = Task.Run(async () =>
+        {
+            await Task.Delay(300, TestContext.Current.CancellationToken);
+            await reader.DisposeAsync();
+        }, TestContext.Current.CancellationToken);
+
+        DiscoveryFile.Publish(FilePath, 5101, new string('b', 32));
+        await released;
+
+        Assert.True(DiscoveryFile.TryRead(FilePath, out var read, out _));
+        Assert.Equal((5101, new string('b', 32)), (read.Port, read.Token));
+    }
+
+    [Fact]
+    public void A_caller_that_never_lets_go_fails_the_publish_after_the_timeout_and_leaves_no_temporary_file()
+    {
+        if (!OperatingSystem.IsWindows()) return;   // elsewhere a rename replaces a file that is open
+        DiscoveryFile.Publish(FilePath, 5100, new string('a', 32));
+        using (File.Open(FilePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            Assert.ThrowsAny<UnauthorizedAccessException>(() =>
+                DiscoveryFile.Publish(FilePath, 5101, new string('b', 32), TimeSpan.FromMilliseconds(200)));
+        }
+
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(FilePath)!, "*.tmp"));
+        Assert.True(DiscoveryFile.TryRead(FilePath, out var read, out _));
+        Assert.Equal(5100, read.Port);
+    }
+
+    [Fact]
     public void Only_the_person_running_the_backend_can_read_the_file()
     {
         DiscoveryFile.Publish(FilePath, 5100, new string('a', 32));
