@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <PackageId>TauriKit.Sidecar.Loopback.AspNetCore</PackageId>
-    <Description>The ASP.NET Core host of a desktop app's loopback backend: listen on 127.0.0.1 only, announce the port the system picked or publish it in an owner-only discovery file, answer only registered callers (open routes by name), refuse non-loopback Host names, and report unexpected failures without their messages. Pairs with the tauri-kit-sidecar crate's loopback feature.</Description>
+    <Description>The ASP.NET Core host of a desktop app's loopback backend: listen on 127.0.0.1 only, announce the port the system picked or publish it in an owner-only discovery file, answer only registered callers (open routes by name), refuse non-loopback Host names, report unexpected failures without their messages, take a request to quit, and quit when the app that started it is gone. Pairs with the tauri-kit-sidecar crate's loopback feature.</Description>
     <PackageTags>tauri;sidecar;loopback;kestrel;aspnetcore;desktop</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <!-- Sidecars are often published ahead-of-time compiled; the analyzers keep this library usable there. -->

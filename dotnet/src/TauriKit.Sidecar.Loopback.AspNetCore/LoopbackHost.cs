@@ -29,7 +29,8 @@ namespace TauriKit.Sidecar.Loopback;
 /// var app = builder.Build();
 /// app.UseLoopbackHostCheck();
 /// app.UseFaults(new FaultOptions { OwnNamespaces = ["MyCompany."] });
-/// app.MapGet("/health", () => "ok").AllowAnonymous();
+/// app.MapHealthChecks("/health").AllowAnonymous(); // with builder.Services.AddHealthChecks()
+/// app.MapShutdown();
 /// await app.RunAnnouncingAsync("helper ready port=");
 /// return 0;
 /// </code>

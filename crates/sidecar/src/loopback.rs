@@ -303,6 +303,16 @@ impl Loopback {
     }
 }
 
+/// One start of a backend for a [`Supervisor`](crate::supervise::Supervisor): the process, and its
+/// endpoint as the value. A backend whose readiness line says more than its port keeps
+/// [`Loopback::ready_line`] in a value of its own instead.
+impl From<Loopback> for crate::supervise::Started<Endpoint> {
+    fn from(loopback: Loopback) -> Self {
+        let (sidecar, value) = loopback.into_parts();
+        crate::supervise::Started { sidecar, value }
+    }
+}
+
 /// An unexpected failure on the host side, without anything it was about — the shape of
 /// `FaultView` in `TauriKit.Sidecar.Loopback`: the exception's type, and the methods of the app's
 /// own code it passed through, innermost first ([`at`](Fault::at) is the first of them). The

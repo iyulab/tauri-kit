@@ -46,6 +46,12 @@ Either way, requests are checked the same way:
   (`{"fault":{"type","at","frames"}}`). It never includes the message, which can quote the data the
   request was about. `Fault.Of` reads a failure away from any request the same way. On the Rust
   side, `Response::fault` reads that answer as a `Fault`.
+- **It can be asked to quit, and quits when its app is gone.** `MapShutdown` adds a `POST` route that
+  answers 202 and stops the host, which finishes the requests under way — the app asks before it
+  stops the process. `AddParentProcessWatch(pid)` stops the host when the app that started it exits,
+  or at once when it is already gone: the other half of the job object, for a platform without one
+  or an app that was killed. For "is it still answering", ASP.NET Core's own health checks serve
+  (`AddHealthChecks`, `MapHealthChecks`) — the Rust side's supervisor probes the route the app names.
 
 The names are the app's: the variable, the line's prefix, the file's path and the kinds.
 
@@ -64,7 +70,8 @@ app.UseFaults(new FaultOptions
     OwnNamespaces = ["MyCompany."],
     StatusFor = e => e is KeyNotFoundException ? StatusCodes.Status404NotFound : null,
 });
-app.MapGet("/health", () => "ok").AllowAnonymous();
+app.MapHealthChecks("/health").AllowAnonymous(); // with builder.Services.AddHealthChecks()
+app.MapShutdown(); // POST /shutdown, for a caller with a credential
 app.MapPost("/settings", SaveSettings).RequireCaller("owner");
 app.MapPost("/sessions", (HttpContext context) =>
 {
@@ -86,7 +93,9 @@ if (token is null)
 }
 var credentials = new LoopbackCredentials();
 credentials.Register(token, "app");
-// … the same builder and routes …
+// … the same builder and routes, and: stop when the app that started us is gone.
+if (int.TryParse(Environment.GetEnvironmentVariable("HELPER_PARENT"), out var parent))
+    builder.Services.AddParentProcessWatch(parent);
 await app.RunAnnouncingAsync("helper ready port=");
 ```
 

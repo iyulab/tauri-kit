@@ -13,6 +13,19 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   an unclear request is answered by asking what the caller was trying to do, not by waiting for a second caller.
 
 ### Added
+- `tauri-kit-sidecar`: `supervise::Supervisor` keeps a sidecar running from a function that starts it once. It checks the
+  process every `check_every`, and with a `Health` probe stops one that fails it `misses` times in a row; it starts an
+  ended one again with the same function while a `RestartPolicy` allows (`limit` starts within `window`, failed ones
+  included; `RestartPolicy::NEVER` leaves it to the app), then leaves it down until `restart`. What a start produced (an
+  `Endpoint`, say — `Loopback` converts into a `Started<Endpoint>`) is swapped in together with the process and read
+  with `current`. `Event::Restarted { before, after }`, `RestartFailed` and `Down` report each step. `stop(grace, ask)`
+  asks with the running value, then stops the process for good; a start under way when it is called is undone when it
+  finishes, not left running. The watcher locks the process only to check on it, never across a probe, a wait or a
+  start.
+- `TauriKit.Sidecar.Loopback.AspNetCore`: `MapShutdown(pattern = "/shutdown")` — a `POST` route that answers 202 and stops
+  the host, behind the caller's credential like every route. `AddParentProcessWatch(pid)` stops the host when the app
+  that started it exits, or at once when it is gone; a process with that id that started after the host is not its
+  parent. For health, ASP.NET Core's `MapHealthChecks` is the route to use (the README shows it).
 - `tauri-kit-sidecar`: `run(cmd, deadline)` runs a helper that does one job and exits — a converter, a renderer — and
   hands back `Ran::Exited(std::process::Output)` or `Ran::TimedOut`. Same care as `Sidecar`: no console window, stdin
   closed, both streams read while it is waited for. When the deadline passes the whole process tree is stopped, not only

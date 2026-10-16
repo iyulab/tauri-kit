@@ -11,6 +11,9 @@
 //!   keeps waiting after it has died. [`Sidecar::wait_ready`] checks the process between probes and
 //!   returns as soon as it exits. A sidecar that announces readiness on stdout — often with the
 //!   port it chose — is waited for with [`Sidecar::wait_line`], under the same rules.
+//! - **A sidecar that dies stays dead.** Once running, nothing notices it ending, or restarts it
+//!   within limits, or stops it in order. [`supervise::Supervisor`] does, from a function that
+//!   starts it once.
 //! - **Pipes fill up.** A child whose output nobody reads blocks once the pipe buffer is full.
 //!   [`Output::Files`] drains both streams on background threads.
 //!
@@ -41,9 +44,12 @@
 //! exited — so the job object, which ends the sidecar only once the app is gone, is too late. With
 //! Tauri's updater plugin that is one call in the hook it runs just before the installer:
 //! `app.updater_builder().on_before_exit(move || { /* sidecar.shutdown(…) on the app's own state */ })`.
+//! A [`supervise::Supervisor`] is stopped the same way, with [`supervise::Supervisor::stop`], which
+//! also keeps it from being started again while the installer runs.
 
 #[cfg(feature = "loopback")]
 pub mod loopback;
+pub mod supervise;
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Write};
