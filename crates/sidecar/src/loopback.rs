@@ -313,6 +313,47 @@ impl From<Loopback> for crate::supervise::Started<Endpoint> {
     }
 }
 
+/// What a failed answer says, read as an RFC 9457 problem (`application/problem+json`): the status,
+/// the problem's `type`, `title` and `detail`, a `reason` — the machine-readable code an app puts
+/// in that extension member for the shell to act on — and, for an unexpected failure, the
+/// [`Fault`] in the `fault` member, which `UseFaults` in `TauriKit.Sidecar.Loopback.AspNetCore`
+/// writes. A body that is not a problem leaves the fields empty; the status is the answer's own.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
+pub struct Problem {
+    /// The answer's HTTP status.
+    #[serde(skip)]
+    pub status: u16,
+    /// The problem type, a URI — `about:blank` when the status says it all.
+    #[serde(rename = "type", default)]
+    pub kind: Option<String>,
+    /// A short summary of the problem type.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// What happened this time, for a person.
+    #[serde(default)]
+    pub detail: Option<String>,
+    /// A code the app chose for its shell to act on (`not-found`, `quota`, …), if any.
+    #[serde(default)]
+    pub reason: Option<String>,
+    /// The failure's type and where, for an unexpected one.
+    #[serde(default)]
+    pub fault: Option<Fault>,
+}
+
+impl Problem {
+    /// The problem a status outside 2xx carries — `None` for 2xx. Whatever the body is, the status
+    /// is kept: a body that is not a problem (empty, text, another shape) gives a problem with only
+    /// its status.
+    pub fn from_answer(status: u16, body: &str) -> Option<Problem> {
+        if (200..300).contains(&status) {
+            return None;
+        }
+        let mut problem = serde_json::from_str::<Problem>(body).unwrap_or_default();
+        problem.status = status;
+        Some(problem)
+    }
+}
+
 /// An unexpected failure on the host side, without anything it was about — the shape of
 /// `FaultView` in `TauriKit.Sidecar.Loopback`: the exception's type, and the methods of the app's
 /// own code it passed through, innermost first ([`at`](Fault::at) is the first of them). The
@@ -335,9 +376,9 @@ pub struct Fault {
 
 impl Fault {
     /// What the host said about a request it failed, read from the answer's status and body: the
-    /// body `{"fault":{…}}` that `UseFaults` in `TauriKit.Sidecar.Loopback.AspNetCore` answers an unexpected
-    /// exception with. `None` for a 2xx answer and for any other body — for an app reading answers
-    /// with its own client.
+    /// `fault` member of the problem that `UseFaults` in `TauriKit.Sidecar.Loopback.AspNetCore` answers
+    /// an unexpected exception with. `None` for a 2xx answer and for any other body — for an app
+    /// reading answers with its own client. [`Problem::from_answer`] reads the rest of the problem.
     pub fn from_answer(status: u16, body: &str) -> Option<Fault> {
         #[derive(serde::Deserialize)]
         struct Answer {
@@ -414,6 +455,56 @@ mod tests {
         .unwrap();
         assert_eq!(fault.at, None);
         assert!(fault.frames.is_empty());
+    }
+
+    #[test]
+    fn a_failed_answer_reads_as_a_problem_with_its_fault() {
+        let body = r#"{"type":"about:blank","title":"Internal Server Error","status":500,"fault":{"type":"System.IO.IOException","at":"App.Store.Read","frames":["App.Store.Read"]}}"#;
+        let problem = Problem::from_answer(500, body).unwrap();
+        assert_eq!(problem.status, 500);
+        assert_eq!(problem.kind.as_deref(), Some("about:blank"));
+        assert_eq!(problem.title.as_deref(), Some("Internal Server Error"));
+        assert_eq!(
+            problem.fault.map(|f| f.kind),
+            Some("System.IO.IOException".into())
+        );
+        assert_eq!(
+            Fault::from_answer(500, body).map(|f| f.at),
+            Some(Some("App.Store.Read".into())),
+            "the fault reads the same off a problem"
+        );
+    }
+
+    #[test]
+    fn a_problem_keeps_the_apps_reason_and_detail() {
+        let body = r#"{"type":"https://example.com/problems/quota","title":"Out of quota","status":402,"detail":"The monthly allowance is used up.","reason":"quota"}"#;
+        let problem = Problem::from_answer(402, body).unwrap();
+        assert_eq!(problem.reason.as_deref(), Some("quota"));
+        assert_eq!(
+            problem.detail.as_deref(),
+            Some("The monthly allowance is used up.")
+        );
+        assert_eq!(problem.fault, None);
+    }
+
+    #[test]
+    fn any_failed_answer_is_a_problem_with_at_least_its_status() {
+        assert_eq!(Problem::from_answer(200, r#"{"title":"x"}"#), None);
+        let bare = Problem::from_answer(503, "Service Unavailable").unwrap();
+        assert_eq!(
+            bare,
+            Problem {
+                status: 503,
+                ..Problem::default()
+            }
+        );
+        assert_eq!(
+            Problem::from_answer(404, r#"{"status":500}"#)
+                .unwrap()
+                .status,
+            404,
+            "the answer's own status, not the body's"
+        );
     }
 
     #[test]

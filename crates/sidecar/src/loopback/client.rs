@@ -11,7 +11,7 @@ use ureq::unversioned::transport::{
     Buffers, ConnectionDetails, Connector, LazyBuffers, NextTimeout, Transport,
 };
 
-use super::{Endpoint, Fault};
+use super::{Endpoint, Fault, Problem};
 
 /// How a [`Client`] behaves.
 #[derive(Debug, Clone)]
@@ -49,6 +49,12 @@ impl Response {
     /// [`Fault::from_answer`].
     pub fn fault(&self) -> Option<Fault> {
         Fault::from_answer(self.status, &self.body)
+    }
+
+    /// The RFC 9457 problem a status outside 2xx carries, as far as its body says — see
+    /// [`Problem::from_answer`]. `None` for a 2xx answer.
+    pub fn problem(&self) -> Option<Problem> {
+        Problem::from_answer(self.status, &self.body)
     }
 }
 

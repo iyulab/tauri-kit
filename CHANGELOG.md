@@ -8,11 +8,21 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 ## [Unreleased]
 
 ### Changed
+- `TauriKit.Sidecar.Loopback.AspNetCore` (breaking): `UseFaults` answers as an RFC 9457 problem, served as
+  `application/problem+json`. An unexpected failure is `{"type":"about:blank","title":"Internal Server Error","status":500,
+  "fault":{…}}` — the fault is unchanged, now the problem's `fault` extension member — and an exception `StatusFor` maps is
+  `{"type":"about:blank","title":<the status's phrase>,"status":<it>}` instead of an empty body. `FaultResponse` is now
+  `FaultProblem` (`Type`, `Title`, `Status`, `Fault`; `FaultProblem.Of(fault)`), and `StatusProblem` is the status-only
+  shape. To move: a caller that deserializes `FaultResponse` takes `FaultProblem` — its `Fault` is where it was. A Rust
+  caller using `Response::fault` / `Fault::from_answer` needs no change: they read the `fault` member as before.
 - `SCOPE.md`: the fourth admission question no longer counts callers. It asks whether the shape is general — a primitive
   for every app that hits the same cause, read from the root cause rather than from the shape one caller wrote down — and
   an unclear request is answered by asking what the caller was trying to do, not by waiting for a second caller.
 
 ### Added
+- `tauri-kit-sidecar` (`loopback`): `Problem::from_answer(status, body)` and `Response::problem()` read any answer outside
+  2xx as an RFC 9457 problem — the status, `type` (as `kind`), `title`, `detail`, a `reason` extension member an app sets
+  for its shell to act on, and the `fault` member. A body that is not a problem gives one with only the status.
 - `tauri-kit-update`, a new crate: `Updates::start(source, UpdateOptions, on_event)` looks for a newer release when one is
   due — `every` (twelve hours) after the last look, kept in `state_file` across launches, or at once when the clock went
   backwards — and downloads its installer in the background. `Event::Found { first_time }` announces a version once,

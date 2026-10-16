@@ -41,11 +41,15 @@ Either way, requests are checked the same way:
   header is not `127.0.0.1`, `localhost` or `[::1]` with the port the request came in on. Optionally
   it also accepts names under `localhost`, which browsers resolve to this computer themselves. A web
   page whose own name was pointed at 127.0.0.1 (DNS rebinding) is refused even on an open route.
-- **Failures don't leak.** `UseFaults` reports an unexpected failure as its exception type and the
-  frames in the app's own code it passed through, innermost first
-  (`{"fault":{"type","at","frames"}}`). It never includes the message, which can quote the data the
-  request was about. `Fault.Of` reads a failure away from any request the same way. On the Rust
-  side, `Response::fault` reads that answer as a `Fault`.
+- **Failures don't leak, and they read as standard problems.** `UseFaults` answers an unexpected
+  failure as an RFC 9457 problem (`application/problem+json`, `type` · `title` · `status`) whose
+  `fault` member is its exception type and the frames in the app's own code it passed through,
+  innermost first (`"fault":{"type","at","frames"}`). It never includes the message, which can quote
+  the data the request was about. An exception the app expects (`StatusFor`) is answered as a problem
+  that says only its status. `Fault.Of` reads a failure away from any request the same way. On the
+  Rust side, `Response::problem` reads any failed answer as a `Problem` — with the `reason` member an
+  app sets on its own problems (`Results.Problem(..., extensions: { ["reason"] = "quota" })`) — and
+  `Response::fault` its `fault`.
 - **It can be asked to quit, and quits when its app is gone.** `MapShutdown` adds a `POST` route that
   answers 202 and stops the host, which finishes the requests under way — the app asks before it
   stops the process. `AddParentProcessWatch(pid)` stops the host when the app that started it exits,

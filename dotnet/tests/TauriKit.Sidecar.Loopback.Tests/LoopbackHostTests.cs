@@ -72,9 +72,14 @@ public sealed class LoopbackHostTests : IAsyncLifetime
     {
         using var response = await _http.GetAsync(new Uri("/boom", UriKind.Relative), TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
         var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         Assert.DoesNotContain("someone private", text, StringComparison.Ordinal);
-        var fault = JsonNode.Parse(text)!["fault"]!;
+        var problem = JsonNode.Parse(text)!;
+        Assert.Equal("about:blank", (string?)problem["type"]);
+        Assert.Equal("Internal Server Error", (string?)problem["title"]);
+        Assert.Equal(500, (int?)problem["status"]);
+        var fault = problem["fault"]!;
         Assert.Equal("System.InvalidOperationException", (string?)fault["type"]);
         Assert.Equal("TauriKit.Sidecar.Loopback.Tests.Thrower.Throw", (string?)fault["at"]);
         var frames = fault["frames"]!.AsArray().Select(f => (string?)f).ToList();
@@ -87,7 +92,12 @@ public sealed class LoopbackHostTests : IAsyncLifetime
     {
         using var response = await _http.GetAsync(new Uri("/expected", UriKind.Relative), TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-        Assert.Empty(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        var problem = JsonNode.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken))!;
+        Assert.Equal("about:blank", (string?)problem["type"]);
+        Assert.Equal("Conflict", (string?)problem["title"]);
+        Assert.Equal(409, (int?)problem["status"]);
+        Assert.Null(problem["fault"]);
     }
 }
 

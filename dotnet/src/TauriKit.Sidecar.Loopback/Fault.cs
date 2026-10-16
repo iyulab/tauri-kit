@@ -9,8 +9,22 @@ namespace TauriKit.Sidecar.Loopback;
 /// </summary>
 public sealed record FaultView(string Type, string? At, IReadOnlyList<string> Frames);
 
-/// <summary>The body of a 500 answer: <c>{"fault":{"type":…,"at":…}}</c>.</summary>
-public sealed record FaultResponse(FaultView Fault);
+/// <summary>
+/// The body of an answer to an unexpected failure: an RFC 9457 problem — <c>type</c>, <c>title</c>,
+/// <c>status</c>, served as <c>application/problem+json</c> — with the <see cref="FaultView"/> as its
+/// <c>fault</c> extension member: <c>{"type":"about:blank","title":"Internal Server Error","status":500,"fault":{…}}</c>.
+/// </summary>
+public sealed record FaultProblem(string Type, string Title, int Status, FaultView Fault)
+{
+    /// <summary>The 500 problem for <paramref name="fault"/>.</summary>
+    public static FaultProblem Of(FaultView fault) => new("about:blank", "Internal Server Error", 500, fault);
+}
+
+/// <summary>
+/// An RFC 9457 problem that says only its status — <c>{"type":"about:blank","title":…,"status":…}</c> —
+/// for an exception the app expects (see <c>FaultOptions.StatusFor</c>).
+/// </summary>
+public sealed record StatusProblem(string Type, string Title, int Status);
 
 /// <summary>Reads a <see cref="FaultView"/> off an exception.</summary>
 public static class Fault

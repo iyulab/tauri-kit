@@ -83,10 +83,10 @@ public static class LoopbackHost
     }
 
     /// <summary>
-    /// Turns an exception escaping a request into an answer: the status
-    /// <see cref="FaultOptions.StatusFor"/> gives it with no body, or else 500 with a
-    /// <see cref="FaultResponse"/> — the exception's type and the frames in the app's own code,
-    /// never the message, which can quote the data the request was about.
+    /// Turns an exception escaping a request into an RFC 9457 problem (<c>application/problem+json</c>):
+    /// the status <see cref="FaultOptions.StatusFor"/> gives it, as a <see cref="StatusProblem"/>, or else
+    /// 500 with a <see cref="FaultProblem"/> — whose <c>fault</c> member holds the exception's type and the
+    /// frames in the app's own code, never the message, which can quote the data the request was about.
     /// </summary>
     public static IApplicationBuilder UseFaults(this IApplicationBuilder app, FaultOptions options)
     {
@@ -103,13 +103,18 @@ public static class LoopbackHost
                 if (options.StatusFor?.Invoke(e) is { } status)
                 {
                     context.Response.StatusCode = status;
+                    var title = Microsoft.AspNetCore.WebUtilities.ReasonPhrases.GetReasonPhrase(status);
+                    await context.Response.WriteAsJsonAsync(new StatusProblem("about:blank", title, status), FaultJson.Default.StatusProblem, ProblemJson).ConfigureAwait(false);
                     return;
                 }
                 context.Response.StatusCode = StatusCodes.Status500InternalServerError;
-                await context.Response.WriteAsJsonAsync(new FaultResponse(Fault.Of(e, options.OwnNamespaces, options.MaxFrames)), FaultJson.Default.FaultResponse).ConfigureAwait(false);
+                var problem = FaultProblem.Of(Fault.Of(e, options.OwnNamespaces, options.MaxFrames));
+                await context.Response.WriteAsJsonAsync(problem, FaultJson.Default.FaultProblem, ProblemJson).ConfigureAwait(false);
             }
         });
     }
+
+    private const string ProblemJson = "application/problem+json";
 
     /// <summary>The port the application listens on, once started.</summary>
     public static int Port(this WebApplication app)
@@ -190,12 +195,13 @@ public sealed class FaultOptions
     public int MaxFrames { get; init; } = Fault.DefaultMaxFrames;
 
     /// <summary>
-    /// The status to answer an exception the app expects with (a conflict, say), or <c>null</c> to
-    /// report it as a fault.
+    /// The status to answer an exception the app expects with (a conflict, say), as a problem that says
+    /// only that status, or <c>null</c> to report it as a fault.
     /// </summary>
     public Func<Exception, int?>? StatusFor { get; init; }
 }
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
-[JsonSerializable(typeof(FaultResponse))]
+[JsonSerializable(typeof(FaultProblem))]
+[JsonSerializable(typeof(StatusProblem))]
 internal sealed partial class FaultJson : JsonSerializerContext;
