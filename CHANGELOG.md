@@ -7,6 +7,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-17
+
 ### Changed
 - `TauriKit.Sidecar.Loopback.AspNetCore` (breaking): `UseFaults` answers as an RFC 9457 problem, served as
   `application/problem+json`. An unexpected failure is `{"type":"about:blank","title":"Internal Server Error","status":500,
@@ -565,6 +567,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - `tauri-kit-sidecar`: bundled helper processes without a console window, stopped together with
   everything they start, with readiness waits that notice a crash.
 
+[0.19.0]: https://github.com/iyulab/tauri-kit/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/iyulab/tauri-kit/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/iyulab/tauri-kit/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/iyulab/tauri-kit/compare/v0.16.0...v0.16.1
