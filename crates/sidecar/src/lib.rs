@@ -702,8 +702,13 @@ mod tests {
 
     #[test]
     fn a_free_loopback_port_is_nonzero_and_bindable() {
-        let port = free_loopback_port().unwrap();
-        assert_ne!(port, 0);
-        TcpListener::bind((Ipv4Addr::LOCALHOST, port)).unwrap();
+        // The port was free a moment ago, nothing more: a test running alongside may take it before
+        // this binds (as the documentation says), so one of a few tries has to bind.
+        let bound = (0..5).any(|_| {
+            let port = free_loopback_port().unwrap();
+            assert_ne!(port, 0);
+            TcpListener::bind((Ipv4Addr::LOCALHOST, port)).is_ok()
+        });
+        assert!(bound, "no port it gave was bindable");
     }
 }
