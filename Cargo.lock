@@ -1470,6 +1470,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-kit-update"
+version = "0.18.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri-kit-fs",
+ "tempfile",
+]
+
+[[package]]
 name = "tauri-kit-watch"
 version = "0.18.0"
 dependencies = [

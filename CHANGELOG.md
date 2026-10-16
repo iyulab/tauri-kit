@@ -13,6 +13,18 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   an unclear request is answered by asking what the caller was trying to do, not by waiting for a second caller.
 
 ### Added
+- `tauri-kit-update`, a new crate: `Updates::start(source, UpdateOptions, on_event)` looks for a newer release when one is
+  due — `every` (twelve hours) after the last look, kept in `state_file` across launches, or at once when the clock went
+  backwards — and downloads its installer in the background. `Event::Found { first_time }` announces a version once,
+  across launches; `Ready` when its installer is downloaded and checked; `Failed { stage }` for a look or a download, and a
+  download that failed waits for the next look. `install_on_close(before_install)` installs a ready installer without
+  starting the app again; `install_now(before_install)` downloads first if it must and asks for a restart.
+  `set_enabled(false)` stops looking and lets go of what was found; `check_now` looks by hand either way. Releases come
+  from a `Source` (`check`, `download`, `install`, and optionally `restore` and `forget` for installers kept on disk);
+  the crate does not depend on Tauri, and the docs show the updater plugin as a source. `is_newer` compares plain
+  `major.minor.patch` versions; a pre-release is never offered. `nsis/wait-for-exit.nsh`: an installer hook that, in
+  update mode, waits up to 20 s for the app and a named helper to let go of their files before the template's
+  running-app check.
 - `tauri-kit-sidecar`: `supervise::Supervisor` keeps a sidecar running from a function that starts it once. It checks the
   process every `check_every`, and with a `Health` probe stops one that fails it `misses` times in a row; it starts an
   ended one again with the same function while a `RestartPolicy` allows (`limit` starts within `window`, failed ones

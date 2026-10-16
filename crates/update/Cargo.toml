@@ -1,0 +1,18 @@
+[package]
+name = "tauri-kit-update"
+version.workspace = true
+description = "Keep an installed desktop app up to date: look on a schedule that survives restarts, download in the background, install when the app closes or now, stop what must stop first — over any source of releases."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+keywords = ["tauri", "update", "updater", "installer", "desktop"]
+categories = ["os"]
+
+[dependencies]
+tauri-kit-fs = { path = "../fs", version = "0.18.0" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"
