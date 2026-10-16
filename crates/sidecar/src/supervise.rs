@@ -442,7 +442,10 @@ impl<T: Clone + Send + 'static> Inner<T> {
     /// the sidecar is down or the supervisor stopped.
     fn recover(&self, ended: Ended, starts: &mut Vec<Instant>) -> bool {
         let _cycle = lock(&self.cycle);
-        // A restart may have replaced the ended process while this waited for the cycle.
+        // A restart may have replaced the ended process while this waited for the cycle. If that
+        // restart failed, there is no process at all and the state is `Down`: watching on is still
+        // right — there is nothing to check, and the next successful restart puts a process back
+        // where this watcher finds it.
         if matches!(ended, Ended::Exited(_)) && self.check().is_none() && !self.stopped() {
             return true;
         }
