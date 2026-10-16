@@ -68,8 +68,13 @@ Work through these in order. The first one that answers settles it.
    the same way for an unrelated app on the same platform?
 3. **Can it be stated without naming a caller?** Every constant it needs becomes a parameter; if
    the parameters are the whole capability, it is the caller's.
-4. **Would a second, unrelated app want it?** A capability already written separately by two apps
-   answers this; a hypothetical second app does not.
+4. **Is the shape general?** Read a request as one sample of every app that will hit the same
+   cause, not as a count of who asked. The root cause, restated in tauri-kit's own terms, decides
+   what to build: a primitive that serves all of those apps, not the shape one caller wrote down.
+   The number of callers is not the test — one request can show a need every app on the platform
+   has, and apps that already wrote the same code separately are evidence for the reading, not a
+   gate it must pass.
 
-When the answer is unclear, prefer the narrower reading: a capability withheld can be added once a
-second app shows the same need, while a capability released becomes a contract.
+When the answer is unclear, find out before building: ask the caller what they were trying to do.
+A capability released becomes a contract, so the work goes into reading the need correctly — not
+into waiting for more callers.

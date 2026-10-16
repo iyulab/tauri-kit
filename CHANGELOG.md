@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Changed
+- `SCOPE.md`: the fourth admission question no longer counts callers. It asks whether the shape is general — a primitive
+  for every app that hits the same cause, read from the root cause rather than from the shape one caller wrote down — and
+  an unclear request is answered by asking what the caller was trying to do, not by waiting for a second caller.
+
 ### Added
 - `tauri-kit-sidecar`: `run(cmd, deadline)` runs a helper that does one job and exits — a converter, a renderer — and
   hands back `Ran::Exited(std::process::Output)` or `Ran::TimedOut`. Same care as `Sidecar`: no console window, stdin
