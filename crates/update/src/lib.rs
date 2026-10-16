@@ -419,6 +419,8 @@ impl<S: Source> Inner<S> {
         (lock(&self.handler))(event);
     }
 
+    /// Writes what survives a launch. The last writer wins: an app runs one instance, and two
+    /// writing at once would cost at most one look too many or one announcement repeated.
     fn save(&self) {
         let Some(path) = &self.state_file else { return };
         let mut saved = lock(&self.saved).clone();
