@@ -7,6 +7,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-17
+
 ### Added
 
 - `tauri-kit-update`: `Status::last_answered` — when the source last answered a look, kept across
@@ -587,6 +589,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - `tauri-kit-sidecar`: bundled helper processes without a console window, stopped together with
   everything they start, with readiness waits that notice a crash.
 
+[0.21.0]: https://github.com/iyulab/tauri-kit/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/iyulab/tauri-kit/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/iyulab/tauri-kit/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/iyulab/tauri-kit/compare/v0.17.0...v0.18.0
