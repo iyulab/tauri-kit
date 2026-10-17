@@ -10,7 +10,7 @@ keywords = ["tauri", "update", "updater", "installer", "desktop"]
 categories = ["os"]
 
 [dependencies]
-tauri-kit-fs = { path = "../fs", version = "0.19.0" }
+tauri-kit-fs = { path = "../fs", version = "0.20.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

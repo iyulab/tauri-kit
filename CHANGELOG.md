@@ -7,6 +7,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-17
+
 ### Added
 - `tauri-kit-update`: `Status::failed` — the version whose download failed since the last look, kept across launches
   with a state file. It is not downloaded again until the next look, so this is when an app offers the person another
@@ -572,6 +574,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - `tauri-kit-sidecar`: bundled helper processes without a console window, stopped together with
   everything they start, with readiness waits that notice a crash.
 
+[0.20.0]: https://github.com/iyulab/tauri-kit/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/iyulab/tauri-kit/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/iyulab/tauri-kit/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/iyulab/tauri-kit/compare/v0.16.1...v0.17.0
