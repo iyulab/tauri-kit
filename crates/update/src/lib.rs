@@ -10,7 +10,8 @@
 //! - **What to say.** A newer version is announced once ([`Event::Found`] with `first_time`), not
 //!   at every look.
 //! - **When to download.** In the background, once per version; a download that failed is not
-//!   tried again until the next look, so a broken release does not cost a download at every launch.
+//!   tried again for that version until `every` has passed or a newer release appears — so a broken
+//!   release does not cost a download at every launch, even for an app that looks at every launch.
 //! - **When to install.** When the app closes ([`Updates::install_on_close`]), or now when the
 //!   person asks ([`Updates::install_now`]). Either way `before_install` runs first: a helper the
 //!   app started holds its own program open, and the installer must replace it — stop it there.
@@ -212,9 +213,9 @@ pub struct Status {
     pub ready: Option<String>,
     /// An installer is being downloaded.
     pub downloading: bool,
-    /// The version whose download failed since the last look, if any — kept across launches with a
-    /// state file. It is not downloaded again until the next look; the moment to offer the person
-    /// another way to get it.
+    /// The version whose download failed, if any — kept across launches with a state file. It is not
+    /// downloaded again until [`UpdateOptions::every`] has passed since, or a newer release is found;
+    /// the moment to offer the person another way to get it.
     pub failed: Option<String>,
     /// When it last looked, as seconds since the Unix epoch.
     pub last_checked: Option<u64>,
@@ -257,6 +258,7 @@ struct Saved {
     announced: Option<String>,
     ready: Option<String>,
     failed: Option<String>,
+    failed_at: Option<u64>,
 }
 
 type Handler = Box<dyn for<'a> FnMut(Event<'a>) + Send>;
@@ -502,10 +504,19 @@ impl<S: Source> Inner<S> {
         };
         let first_time = {
             let mut saved = lock(&self.saved);
-            saved.checked_at = Some(now());
+            let now = now();
+            saved.checked_at = Some(now);
             saved.answered_at = saved.checked_at;
-            // A new look gives a download that failed another chance.
-            saved.failed = None;
+            // A download that failed gets another chance once `every` has passed since, or for a
+            // newer release — not at every look, which may be every launch.
+            let waited = saved
+                .failed_at
+                .is_none_or(|at| now < at || now - at >= self.every.as_secs());
+            let other = found.as_ref().map(|f| f.version.as_str()) != saved.failed.as_deref();
+            if waited || other {
+                saved.failed = None;
+                saved.failed_at = None;
+            }
             match &found {
                 Some(found) => {
                     let first = saved.announced.as_deref() != Some(found.version.as_str());
@@ -542,8 +553,8 @@ impl<S: Source> Inner<S> {
         Looked::Found(version)
     }
 
-    /// Downloads the installer of the release found, unless it is ready, failed since the last
-    /// look, or another download is under way.
+    /// Downloads the installer of the release found, unless it is ready, its download failed and
+    /// may not be tried again yet (see [`Status::failed`]), or another download is under way.
     fn fetch(&self) {
         if self.downloading.swap(true, Ordering::SeqCst) {
             return;
@@ -574,7 +585,11 @@ impl<S: Source> Inner<S> {
                     }
                 }
                 Err(error) => {
-                    lock(&self.saved).failed = Some(target.version.clone());
+                    {
+                        let mut saved = lock(&self.saved);
+                        saved.failed = Some(target.version.clone());
+                        saved.failed_at = Some(now());
+                    }
                     self.save();
                     self.emit(Event::Failed {
                         stage: Stage::Download,

@@ -13,6 +13,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   launches. A look the source did not answer leaves it, so an app can tell «up to date» (answered,
   nothing newer) from «not known yet» (never answered); before, both read the same.
 
+### Changed
+
+- `tauri-kit-update`: a download that failed is tried again for the same version only once `every`
+  has passed since the failure, or when a newer release is found — no longer at every look. An app
+  that also looks at launch (`check_now`) no longer downloads a broken release at every launch, which
+  the crate already promised. `Status::failed` keeps naming that version until then.
+
 ## [0.20.0] - 2026-10-17
 
 ### Added

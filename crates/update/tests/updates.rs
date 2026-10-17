@@ -293,8 +293,8 @@ fn an_installer_for_a_version_already_installed_is_let_go() {
 }
 
 #[test]
-fn a_download_that_fails_is_not_tried_again_until_the_next_look() {
-    let fake = Fake::answering(&[Ok(Some("1.2.0"))]);
+fn a_download_that_fails_is_not_tried_again_for_the_same_version_but_is_for_a_newer_one() {
+    let fake = Fake::answering(&[Ok(Some("1.2.0")), Ok(Some("1.2.0")), Ok(Some("1.3.0"))]);
     fake.0.lock().unwrap().failing.push("1.2.0".into());
     let (handler, events) = recorder();
     let updates = Updates::start(fake.clone(), options(None), handler);
@@ -306,13 +306,44 @@ fn a_download_that_fails_is_not_tried_again_until_the_next_look() {
     assert_eq!(updates.status().ready, None);
     assert_eq!(updates.status().failed.as_deref(), Some("1.2.0"));
 
-    // The next look clears it and downloads once more.
+    // Looking again — as an app may at every launch — does not download the same version again.
+    fake.0.lock().unwrap().failing.clear();
+    assert_eq!(updates.check_now(), Looked::Found("1.2.0".into()));
+    assert_eq!(next(&events), Seen::Found("1.2.0".into(), false));
+    sleep(Duration::from_millis(300));
+    assert_eq!(fake.count(&Call::Download("1.2.0".into())), 1);
+    assert_eq!(updates.status().failed.as_deref(), Some("1.2.0"));
+
+    // A newer release is downloaded.
+    assert_eq!(updates.check_now(), Looked::Found("1.3.0".into()));
+    assert_eq!(next(&events), Seen::Found("1.3.0".into(), true));
+    assert_eq!(next(&events), Seen::Ready("1.3.0".into()));
+    assert_eq!(updates.status().failed, None);
+}
+
+#[test]
+fn a_download_that_failed_is_tried_again_once_every_has_passed() {
+    let fake = Fake::answering(&[Ok(Some("1.2.0"))]);
+    fake.0.lock().unwrap().failing.push("1.2.0".into());
+    let (handler, events) = recorder();
+    let updates = Updates::start(
+        fake.clone(),
+        UpdateOptions {
+            every: Duration::ZERO,
+            enabled: false,
+            ..UpdateOptions::new("1.1.0")
+        },
+        handler,
+    );
+    assert_eq!(updates.check_now(), Looked::Found("1.2.0".into()));
+    assert_eq!(next(&events), Seen::Found("1.2.0".into(), true));
+    assert!(matches!(next(&events), Seen::Failed(Stage::Download, _)));
+
     fake.0.lock().unwrap().failing.clear();
     assert_eq!(updates.check_now(), Looked::Found("1.2.0".into()));
     assert_eq!(next(&events), Seen::Found("1.2.0".into(), false));
     assert_eq!(next(&events), Seen::Ready("1.2.0".into()));
     assert_eq!(fake.count(&Call::Download("1.2.0".into())), 2);
-    assert_eq!(updates.status().failed, None);
 }
 
 #[test]
