@@ -298,6 +298,7 @@ fn a_download_that_fails_is_not_tried_again_until_the_next_look() {
         Seen::Failed(Stage::Download, Some("1.2.0".into()))
     );
     assert_eq!(updates.status().ready, None);
+    assert_eq!(updates.status().failed.as_deref(), Some("1.2.0"));
 
     // The next look clears it and downloads once more.
     fake.0.lock().unwrap().failing.clear();
@@ -305,6 +306,25 @@ fn a_download_that_fails_is_not_tried_again_until_the_next_look() {
     assert_eq!(next(&events), Seen::Found("1.2.0".into(), false));
     assert_eq!(next(&events), Seen::Ready("1.2.0".into()));
     assert_eq!(fake.count(&Call::Download("1.2.0".into())), 2);
+    assert_eq!(updates.status().failed, None);
+}
+
+#[test]
+fn a_failed_download_is_still_reported_after_a_relaunch() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join("update.json");
+    let fake = Fake::answering(&[Ok(Some("1.2.0"))]);
+    fake.0.lock().unwrap().failing.push("1.2.0".into());
+    let (handler, events) = recorder();
+    let first = Updates::start(fake.clone(), options(Some(&state)), handler);
+    assert_eq!(next(&events), Seen::Found("1.2.0".into(), true));
+    assert!(matches!(next(&events), Seen::Failed(Stage::Download, _)));
+    drop(first);
+
+    // Not due yet: the next launch does not look, and still says which download failed.
+    let (handler, _events) = recorder();
+    let again = Updates::start(fake, options(Some(&state)), handler);
+    assert_eq!(again.status().failed.as_deref(), Some("1.2.0"));
 }
 
 #[test]

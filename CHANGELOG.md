@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+- `tauri-kit-update`: `Status::failed` — the version whose download failed since the last look, kept across launches
+  with a state file. It is not downloaded again until the next look, so this is when an app offers the person another
+  way to get it (a download link). `Status` gains a field: code that builds a `Status` value itself needs it.
+
 ## [0.19.0] - 2026-10-17
 
 ### Changed

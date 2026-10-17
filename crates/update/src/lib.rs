@@ -212,6 +212,10 @@ pub struct Status {
     pub ready: Option<String>,
     /// An installer is being downloaded.
     pub downloading: bool,
+    /// The version whose download failed since the last look, if any — kept across launches with a
+    /// state file. It is not downloaded again until the next look; the moment to offer the person
+    /// another way to get it.
+    pub failed: Option<String>,
     /// When it last looked, as seconds since the Unix epoch.
     pub last_checked: Option<u64>,
 }
@@ -337,12 +341,19 @@ impl<S: Source> Updates<S> {
     /// Where updating stands.
     pub fn status(&self) -> Status {
         let inner = &self.inner;
+        // One lock for both: a guard taken inside the struct expression lives to its end, so a
+        // second `lock(&inner.saved)` there would wait on the first.
+        let (failed, last_checked) = {
+            let saved = lock(&inner.saved);
+            (saved.failed.clone(), saved.checked_at)
+        };
         Status {
             enabled: inner.enabled.load(Ordering::SeqCst),
             available: lock(&inner.found).as_ref().map(|f| f.version.clone()),
             ready: lock(&inner.ready).as_ref().map(|(f, _)| f.version.clone()),
             downloading: inner.downloading.load(Ordering::SeqCst),
-            last_checked: lock(&inner.saved).checked_at,
+            failed,
+            last_checked,
         }
     }
 
