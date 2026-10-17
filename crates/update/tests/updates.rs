@@ -202,6 +202,8 @@ fn a_release_that_is_not_newer_is_not_offered() {
     assert_eq!(updates.check_now(), Looked::Latest);
     assert!(events.recv_timeout(Duration::from_millis(200)).is_err());
     assert_eq!(updates.status().available, None);
+    // Up to date, and known to be: the source answered.
+    assert!(updates.status().last_answered.is_some());
 }
 
 #[test]
@@ -226,6 +228,10 @@ fn a_version_is_announced_once_across_launches_and_the_schedule_survives_them() 
         "asked although a look was not due"
     );
     assert!(updates.status().last_checked.is_some());
+    assert!(
+        updates.status().last_answered.is_some(),
+        "the answer is kept across launches"
+    );
 
     assert_eq!(updates.check_now(), Looked::Found("1.2.0".into()));
     assert_eq!(next(&events), Seen::Found("1.2.0".into(), false));
@@ -335,6 +341,9 @@ fn an_unreachable_source_is_reported_and_changes_nothing() {
     assert_eq!(next(&events), Seen::Failed(Stage::Check, None));
     assert_eq!(updates.check_now(), Looked::Unreachable("offline".into()));
     assert_eq!(updates.status().available, None);
+    // Looked, but never answered: not «up to date».
+    let status = updates.status();
+    assert!(status.last_checked.is_some() && status.last_answered.is_none());
 }
 
 #[test]

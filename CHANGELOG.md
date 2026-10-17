@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- `tauri-kit-update`: `Status::last_answered` — when the source last answered a look, kept across
+  launches. A look the source did not answer leaves it, so an app can tell «up to date» (answered,
+  nothing newer) from «not known yet» (never answered); before, both read the same.
+
 ## [0.20.0] - 2026-10-17
 
 ### Added

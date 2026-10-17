@@ -218,6 +218,11 @@ pub struct Status {
     pub failed: Option<String>,
     /// When it last looked, as seconds since the Unix epoch.
     pub last_checked: Option<u64>,
+    /// When the source last answered a look, as seconds since the Unix epoch — kept across launches
+    /// with a state file. A look the source did not answer leaves it as it was, so with nothing
+    /// [`available`](Self::available) this tells «up to date» (it answered) from «not known» (it
+    /// never has).
+    pub last_answered: Option<u64>,
 }
 
 /// Whether `candidate` is a newer `major.minor.patch` than `current`. A version that is not of that
@@ -248,6 +253,7 @@ const FORMAT: &str = "tauri-kit-update/1";
 struct Saved {
     format: String,
     checked_at: Option<u64>,
+    answered_at: Option<u64>,
     announced: Option<String>,
     ready: Option<String>,
     failed: Option<String>,
@@ -343,9 +349,9 @@ impl<S: Source> Updates<S> {
         let inner = &self.inner;
         // One lock for both: a guard taken inside the struct expression lives to its end, so a
         // second `lock(&inner.saved)` there would wait on the first.
-        let (failed, last_checked) = {
+        let (failed, last_checked, last_answered) = {
             let saved = lock(&inner.saved);
-            (saved.failed.clone(), saved.checked_at)
+            (saved.failed.clone(), saved.checked_at, saved.answered_at)
         };
         Status {
             enabled: inner.enabled.load(Ordering::SeqCst),
@@ -354,6 +360,7 @@ impl<S: Source> Updates<S> {
             downloading: inner.downloading.load(Ordering::SeqCst),
             failed,
             last_checked,
+            last_answered,
         }
     }
 
@@ -496,6 +503,7 @@ impl<S: Source> Inner<S> {
         let first_time = {
             let mut saved = lock(&self.saved);
             saved.checked_at = Some(now());
+            saved.answered_at = saved.checked_at;
             // A new look gives a download that failed another chance.
             saved.failed = None;
             match &found {
