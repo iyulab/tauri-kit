@@ -188,7 +188,7 @@ public sealed class Layer
 /// The reports of one run of a .NET backend, appended to a JSON Lines file of its own in the crate's shape — so the app's
 /// shell reads and sends them (<c>pending</c>) as it does its own. Each failure — the same layer, kind and first frame —
 /// is written once, and at most <see cref="DefaultMaxReports"/>; past that, one last report of kind
-/// <see cref="CappedKind"/> says the rest were left out. One writer per file: give each process its own.
+/// <see cref="CappedKind"/> says the rest were left out. One writer per file: give each process its own <see cref="Segment"/>.
 /// </summary>
 public sealed class Reporter
 {

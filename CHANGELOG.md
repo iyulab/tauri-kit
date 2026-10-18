@@ -61,7 +61,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   details a layer's reports may carry, refused by the crate's rules), `Layer.Report` builds a report from a kind and a
   stack — or from an exception: its type's full name and the method names of its stack, never its message or file
   names — keeping only declared details of their kind, and `Reporter.Record` appends it in the crate's line shape,
-  each failure once and capped (`ReportsCapped`), so the shell reads and sends it with `pending`.
+  each failure once and capped (`ReportsCapped`), so the shell reads and sends it with `pending`. `Segment.Open(dir)`
+  gives the backend its own segment of a stream folder, as the crate's `Segment` does: hand `Segment.File` to
+  `Events` or `Reporter`; the lock beside it is held (the lock file opened with `FileShare.None`) until the segment
+  is disposed or the process goes, so the shell's `tidy` never deletes lines the backend is still writing.
 
 ### Changed
 

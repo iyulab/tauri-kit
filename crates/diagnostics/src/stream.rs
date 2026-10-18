@@ -336,6 +336,17 @@ mod tests {
         );
     }
 
+    /// A segment lock another process holds — the .NET side's `Segment`, say — reads as live. Run by hand
+    /// with the lock's path in the environment while that process holds it:
+    /// `TAURI_KIT_HELD_LOCK=<dir>/<id>.lock cargo test -p tauri-kit-diagnostics -- --ignored a_lock_another_process_holds`
+    #[test]
+    #[ignore = "needs a lock held by another process"]
+    fn a_lock_another_process_holds_reads_as_live() {
+        let path = PathBuf::from(std::env::var("TAURI_KIT_HELD_LOCK").unwrap());
+        let id = segment_id(&path).unwrap();
+        assert!(hold(path.parent().unwrap(), id).is_none());
+    }
+
     #[test]
     fn a_lock_left_without_its_segment_is_removed_and_other_files_stay() {
         let dir = tempfile::tempdir().unwrap();

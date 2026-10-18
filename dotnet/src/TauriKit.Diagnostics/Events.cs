@@ -31,7 +31,7 @@ public enum Recorded
 /// sends them (<c>pending_events</c>). Each line carries a random id of these events' own (never the installation's),
 /// the app's version, the platform and the time; the fields are only what the registry declares, each of its kind.
 /// What does not fit is dropped and said once with <c>kit.events.dropped</c>, without the undeclared name or value.
-/// One writer per file: give each process its own.
+/// One writer per file: give each process its own <see cref="Segment"/>.
 /// </summary>
 public sealed class Events
 {

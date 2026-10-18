@@ -167,12 +167,18 @@ shell verifies them against its registry and sends them (`pending_events`). Fiel
 kinds — a choice among declared values, some of them (`Subset`), a count bucketed or capped at 1000,
 true/false, a duration — so none can carry text; what does not fit is dropped and said once, without the
 undeclared name or value. Each line carries a random id of its own, never the installation's. One
-writer per file: give each process its own.
+writer per file: give each process its own segment (below).
+
+Each stream — events, reports — is a folder the shell reads, with one segment per process that writes it:
+`Segment.Open(dir)` gives the backend a file of its own and holds a lock beside it until the segment is disposed
+or the process goes, so the shell (the crate's `segments` and `tidy`) reads it while it is written and deletes it
+only once the backend is gone and every line has been sent. Keep the segment open for as long as anything writes.
 
 ```csharp
 var registry = Registry.FromJson(embeddedRegistryJson);
 var exported = registry.Event("export.finished");          // a misspelling fails here, at start
-var events = new Events(registry, appVersion, Path.Combine(logDir, "backend-events.jsonl"));
+using var segment = Segment.Open(Path.Combine(logDir, "events"));
+var events = new Events(registry, appVersion, segment.File);
 events.Record(exported, ("format", Value.Choice("csv")), ("rows", Value.Count(rows)), ("took", Value.Duration(elapsed)));
 ```
 
@@ -184,7 +190,8 @@ once, at most 50, then one `ReportsCapped`; the shell sends the file with the cr
 
 ```csharp
 var host = registry.Layer("host");
-var reports = new Reporter(Path.Combine(logDir, "backend-reports.jsonl"));
+using var reportSegment = Segment.Open(Path.Combine(logDir, "reports"));
+var reports = new Reporter(reportSegment.File);
 try { … }
 catch (IOException e) { reports.Record(host.Report(e, appVersion, ("status", "timeout"))); }
 ```
