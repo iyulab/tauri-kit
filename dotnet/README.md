@@ -15,6 +15,11 @@ in one of two ways:
 - **Started by the app as its child.** The app passes a fresh random token in an environment
   variable (`LoopbackCredentials.ReadToken`), and the backend announces its port as a line on standard
   output (`RunAnnouncingAsync`), which the app waits for.
+  When a web view's origin includes the backend's port (it loads pages from the backend, or a page
+  talks to it), `LoopbackPort.StartRememberedAsync` starts it on the port it had last time, kept in a
+  file the app names — so what the web view keeps per origin survives a restart. Only when that port
+  stays taken does it move, and the readiness line then says `previousPort=…` (`ready_previous_port`
+  on the Rust side).
 - **Living on its own**, outliving the app's windows. The backend issues its credential itself and
   publishes it with its port in a discovery file (`RunPublishingAsync`). Only the person running the
   backend can read that file: on Windows its access list grants that user and the system and

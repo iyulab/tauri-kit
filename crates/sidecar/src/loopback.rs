@@ -154,6 +154,20 @@ pub fn ready_fields<'a>(line: &'a str, prefix: &str) -> impl Iterator<Item = (&'
         .filter_map(|word| word.split_once('='))
 }
 
+/// The readiness-line field a .NET backend started on a remembered port adds when that port stayed
+/// taken and it moved (`LoopbackPort` on the host side): `previousPort=<port>`. Every origin on the
+/// old port moved with it — what a web view kept for them is not on the new one.
+pub const PREVIOUS_PORT_FIELD: &str = "previousPort";
+
+/// The port a backend had to give up, when its readiness line says so ([`PREVIOUS_PORT_FIELD`]).
+pub fn ready_previous_port(line: &str, prefix: &str) -> Option<u16> {
+    ready_fields(line, prefix)
+        .find(|(key, _)| *key == PREVIOUS_PORT_FIELD)?
+        .1
+        .parse()
+        .ok()
+}
+
 /// How to start a loopback backend as the app's child.
 #[derive(Debug, Clone)]
 pub struct LoopbackOptions {
@@ -526,6 +540,11 @@ mod tests {
             [("previousPort", "5100"), ("mode", "fresh")]
         );
         assert_eq!(ready_fields("other line", "helper ready port=").count(), 0);
+        assert_eq!(ready_previous_port(line, "helper ready port="), Some(5100));
+        assert_eq!(
+            ready_previous_port("helper ready port=5101", "helper ready port="),
+            None
+        );
     }
 
     #[test]

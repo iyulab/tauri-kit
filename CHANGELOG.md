@@ -20,6 +20,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   page before it is handed to the system browser. URLs are read strictly — user info, backslashes,
   non-ASCII hosts and dot segments are refused, not guessed at. The lock does not stop data leaving
   by other means (images, `fetch`, WebSocket); pair it with a Content-Security-Policy.
+- `TauriKit.Sidecar.Loopback.AspNetCore`: `LoopbackPort.StartRememberedAsync` — start a loopback backend on
+  the port it had last time, remembered in a file the app names, so an origin that includes the port
+  (a web view loading pages from the backend) survives a restart. The remembered port is tried a few
+  times (its likeliest holder is the backend's own previous run, still stopping); only when it stays
+  taken does the backend move, and `RememberedStart.RunAnnouncingAsync` adds `previousPort=<port>` to the
+  readiness line. `tauri-kit-sidecar`: `PREVIOUS_PORT_FIELD` and `ready_previous_port` read it.
 
 ## [0.21.0] - 2026-10-17
 

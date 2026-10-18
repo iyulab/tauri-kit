@@ -153,6 +153,12 @@ public static class LoopbackHost
     {
         ArgumentNullException.ThrowIfNull(app);
         await app.StartAsync().ConfigureAwait(false);
+        await AnnounceStartedAsync(app, readyPrefix, output, fields).ConfigureAwait(false);
+    }
+
+    /// <summary>The readiness line for an application already started, then its run until shutdown.</summary>
+    internal static async Task AnnounceStartedAsync(WebApplication app, string readyPrefix, TextWriter? output, IEnumerable<KeyValuePair<string, string>>? fields)
+    {
         var line = ReadyLine(readyPrefix, app.Port(), fields);
         var writer = output ?? Console.Out;
         await writer.WriteLineAsync(line).ConfigureAwait(false);
