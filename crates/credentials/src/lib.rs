@@ -33,6 +33,9 @@
 //! The platform's store is installed on first use, unless the app has already installed a default
 //! store of its own with [`keyring_core::set_default_store`] — including the in-memory
 //! `keyring_core::mock` store, which is how tests run without touching the real one.
+//!
+//! On Windows, the NuGet package `TauriKit.Credentials` reads and writes the same entries from .NET
+//! (a generic credential named `<account>.<service>`), so an app's .NET backend shares its secrets.
 
 use std::sync::{Mutex, OnceLock};
 

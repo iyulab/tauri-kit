@@ -30,6 +30,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   first, as BCP 47 tags, read before any window exists (Windows `GetUserPreferredUILanguages`, macOS
   `CFLocaleCopyPreferredLanguages`, `LANGUAGE`/`LC_ALL`/`LC_MESSAGES`/`LANG` elsewhere); `pick` — the best of
   the languages an app ships (RFC 4647 lookup, then the same language in another region).
+- New NuGet package `TauriKit.Credentials`: the .NET twin of `tauri-kit-credentials` on Windows — the same
+  Credential Manager entries (`<account>.<service>`, user name = account, UTF-16 secret) and the same build
+  separation (`.test`, `.dev`), checked by writing from one language and reading from the other.
+  `BuildKinds.Of(assembly)` tells a Debug build of the app.
 
 ## [0.21.0] - 2026-10-17
 

@@ -1,8 +1,13 @@
-# TauriKit.Sidecar.Loopback
+# tauri-kit for .NET
+
+The .NET halves of tauri-kit, released under the same version as the crates: the loopback backend
+(below) and the Windows credential store ([`TauriKit.Credentials`](#tauritkitcredentials)).
+
+## TauriKit.Sidecar.Loopback
 
 The .NET side of a desktop app's loopback backend — the counterpart of the
 [`tauri-kit-sidecar`](https://github.com/iyulab/tauri-kit/tree/main/crates/sidecar) crate's
-`loopback` feature, released under the same version. Two packages, one namespace:
+`loopback` feature. Two packages, one namespace:
 
 | Package | For | Holds |
 |---|---|---|
@@ -133,3 +138,21 @@ reach it over `HttpClient` at `app.Urls`.
 ## License
 
 [MIT](https://github.com/iyulab/tauri-kit/blob/main/LICENSE)
+
+## TauriKit.Credentials
+
+The .NET twin of the [`tauri-kit-credentials`](https://github.com/iyulab/tauri-kit/tree/main/crates/credentials)
+crate, for Windows: the same Credential Manager entries — a generic credential named
+`<account>.<service>`, its user name the account, the secret as UTF-16 — and the same separation of
+builds (`<service>.test`, `<service>.dev`, `<service>`). A Rust shell and its .NET backend built the same
+way read and write one secret.
+
+```csharp
+var credentials = new Credentials("com.example.app", BuildKinds.Of(typeof(Program).Assembly));
+credentials.Set("api-key", "s3cret");
+string? key = credentials.Get("api-key"); // null when there is none
+credentials.Delete("api-key");            // not there is not an error
+```
+
+`BuildKinds.Of` reads whether the app's assembly was compiled without optimization (a Debug build →
+`Dev`); a test run passes `BuildKind.Test` itself. macOS and Linux stores are not covered on the .NET side.
