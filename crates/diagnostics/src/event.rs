@@ -106,7 +106,10 @@ pub enum FieldKind {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RegistryJson {
+    #[serde(default)]
     events: Unique<EventJson>,
+    #[serde(default)]
+    reports: Unique<Unique<FieldKind>>,
 }
 
 #[derive(Deserialize)]
@@ -154,6 +157,7 @@ impl<'de, V: Deserialize<'de>> Deserialize<'de> for Unique<V> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Registry {
     events: Arc<BTreeMap<String, BTreeMap<String, FieldKind>>>,
+    reports: Arc<BTreeMap<String, Arc<BTreeMap<String, FieldKind>>>>,
 }
 
 /// A name a [`Registry`] declares, from [`Registry::event`] — so a misspelled name fails when the app
@@ -169,7 +173,9 @@ impl EventName {
 }
 
 impl Registry {
-    /// Reads a registry: `{ "events": { "<name>": { "fields": { "<field>": { "kind": … } } } } }`.
+    /// Reads a registry: `{ "events": { "<name>": { "fields": { "<field>": { "kind": … } } } },
+    /// "reports": { "<layer>": { "<detail>": { "kind": … } } } }` — both sections optional. `reports`
+    /// declares the details a report of each layer may carry ([`Registry::layer`]), of the same kinds.
     ///
     /// Refused, with what is wrong, when a name is not a plain lowercase identifier (`export.finished`),
     /// starts with `kit.` (the crate's own), an event has more than [`MAX_FIELDS`] fields, a count has
@@ -199,6 +205,22 @@ impl Registry {
                     .map_err(|why| RegistryError(format!("'{name}.{field}': {why}")))?;
             }
         }
+        for (layer, details) in &parsed.reports.0 {
+            if details.0.len() > MAX_FIELDS {
+                return refuse(format!(
+                    "layer '{layer}' has more than {MAX_FIELDS} details"
+                ));
+            }
+            for (detail, kind) in &details.0 {
+                if !is_field_name(detail) {
+                    return refuse(format!(
+                        "'{layer}.{detail}' is not a plain lowercase detail name"
+                    ));
+                }
+                check_kind(kind)
+                    .map_err(|why| RegistryError(format!("'{layer}.{detail}': {why}")))?;
+            }
+        }
         Ok(Registry {
             events: Arc::new(
                 parsed
@@ -208,7 +230,27 @@ impl Registry {
                     .map(|(n, e)| (n, e.fields.0))
                     .collect(),
             ),
+            reports: Arc::new(
+                parsed
+                    .reports
+                    .0
+                    .into_iter()
+                    .map(|(layer, details)| (layer, Arc::new(details.0)))
+                    .collect(),
+            ),
         })
+    }
+
+    /// A [`Layer`](crate::Layer) named `name` whose frames `rule` picks, carrying the details this
+    /// registry declares for it under `reports` — none, if it declares none.
+    pub fn layer(
+        &self,
+        name: impl Into<String>,
+        rule: impl Into<crate::FrameRule>,
+    ) -> crate::Layer {
+        let name = name.into();
+        let details = self.reports.get(&name).cloned().unwrap_or_default();
+        crate::Layer::new(name, rule).with_details(details)
     }
 
     /// The declared event `name`, or an error naming it.
@@ -323,6 +365,42 @@ fn written(kind: &FieldKind, value: &Value) -> Option<serde_json::Value> {
         }
         _ => None,
     }
+}
+
+/// A report detail as it is written, if `raw` — untrusted text from where the failure was caught — is
+/// a value of `kind`: a count, a duration in milliseconds, `true`/`false`, a declared choice, or declared
+/// values joined with `,`. The written text is the [`written`] value's, so a count lands on its bucket.
+pub(crate) fn detail_text(kind: &FieldKind, raw: &str) -> Option<String> {
+    let number = || {
+        (!raw.is_empty() && raw.len() <= 20 && raw.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| raw.parse::<u64>().ok())
+            .flatten()
+    };
+    let value = match kind {
+        FieldKind::Count { .. } => Value::Count(number()?),
+        FieldKind::Duration { .. } => Value::Duration(Duration::from_millis(number()?)),
+        FieldKind::Bool => Value::Bool(match raw {
+            "true" => true,
+            "false" => false,
+            _ => return None,
+        }),
+        FieldKind::Choice { .. } => Value::Choice(raw.to_string()),
+        FieldKind::Set { .. } => Value::Set(
+            raw.split(',')
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+                .collect(),
+        ),
+    };
+    Some(match written(kind, &value)? {
+        serde_json::Value::String(text) => text,
+        serde_json::Value::Array(items) => items
+            .iter()
+            .filter_map(|i| i.as_str())
+            .collect::<Vec<_>>()
+            .join(","),
+        other => other.to_string(),
+    })
 }
 
 /// Whether a value read back from the file is one [`written`] could have written for `kind`.

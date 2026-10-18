@@ -336,9 +336,16 @@ mod tests {
             instrumentation_key: "k".into(),
             track_url: "https://x/v2.1/track".into(),
         };
-        let report = Report::new(&ui(), "EngineFailed", "", "1.2.3")
-            .detail("status", "500")
-            .detail("code", "engine");
+        let registry = crate::Registry::from_json(
+            r#"{"reports":{"ui":{"status":{"kind":"count","max":1000},"code":{"kind":"choice","values":["engine"]}}}}"#,
+        )
+        .unwrap();
+        let report = registry.layer("ui", FrameRule::web_bundle()).report(
+            "EngineFailed",
+            "",
+            "1.2.3",
+            &[("status", "500"), ("code", "engine")],
+        );
         let item = sink.envelope(&report);
         assert_eq!(
             item["data"]["baseData"]["properties"],

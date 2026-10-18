@@ -1,8 +1,12 @@
 //! What a report holds, and the rules that pick a layer's frames out of a stack.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+
+use crate::event::detail_text;
+use crate::FieldKind;
 
 /// Enough of a stack to tell one failure from another: the frames a [`Layer`] keeps by default.
 pub const MAX_FRAMES: usize = 20;
@@ -10,7 +14,7 @@ pub const MAX_FRAMES: usize = 20;
 /// The kind a report gets when what it was handed is not a plain identifier.
 pub const UNRECOGNIZED_KIND: &str = "Unrecognized";
 
-/// The most details one report carries ([`Report::detail`]).
+/// The most details one report carries ([`Layer::report`]).
 pub const MAX_DETAILS: usize = 8;
 
 /// One error report, exactly as it is written and sent.
@@ -37,8 +41,8 @@ pub struct Report {
     pub arch: String,
     /// When it failed, in UTC to the second (ISO 8601) — reports are often sent on a later launch.
     pub time: String,
-    /// More of what failed, by a name of the app's own — a status code, the app's own error code
-    /// beside the type it came with. See [`Report::detail`].
+    /// More of what failed, under the names the app's registry declares for the layer — a status
+    /// code, the app's own error code beside the type it came with. See [`Layer::report`].
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub details: BTreeMap<String, String>,
 }
@@ -69,22 +73,6 @@ impl Report {
         }
     }
 
-    /// The report with one more detail: `name` is the app's own (an ASCII letter, then letters,
-    /// digits or `_`, at most 32 characters) and `value` is untrusted — a plain identifier as a
-    /// kind is, or a whole number. A detail that breaks either rule is left out whole, as is any
-    /// past [`MAX_DETAILS`]; nothing of it is taken in part. A name given again replaces its value.
-    pub fn detail(mut self, name: &str, value: &str) -> Self {
-        let named = name.len() <= 32
-            && name.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
-            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-        let plain = plain_kind(value) != UNRECOGNIZED_KIND || is_whole_number(value);
-        let room = self.details.len() < MAX_DETAILS || self.details.contains_key(name);
-        if named && plain && room {
-            self.details.insert(name.to_string(), value.to_string());
-        }
-        self
-    }
-
     /// A report of the same layer and version with only `kind`, and no frames.
     pub(crate) fn of_kind(&self, kind: &str) -> Self {
         Report {
@@ -110,6 +98,7 @@ pub struct Layer {
     name: String,
     rule: FrameRule,
     max_frames: usize,
+    details: Arc<BTreeMap<String, FieldKind>>,
 }
 
 impl Layer {
@@ -119,7 +108,37 @@ impl Layer {
             name: name.into(),
             rule: rule.into(),
             max_frames: MAX_FRAMES,
+            details: Arc::default(),
         }
+    }
+
+    /// The details reports of this layer may carry — what the registry declares ([`crate::Registry::layer`]).
+    pub(crate) fn with_details(mut self, details: Arc<BTreeMap<String, FieldKind>>) -> Self {
+        self.details = details;
+        self
+    }
+
+    /// A report of this layer — [`Report::new`] — with `details`: each `(name, value)` is kept only when
+    /// the registry declares `name` for this layer and `value` (untrusted text) is of its kind, written
+    /// as the kind writes it (a count on its bucket). Anything else is left out whole; a layer made with
+    /// [`Layer::new`] declares none, so its reports carry no details. A name given twice keeps its first.
+    pub fn report(
+        &self,
+        kind: &str,
+        stack: &str,
+        version: &str,
+        details: &[(&str, &str)],
+    ) -> Report {
+        let mut report = Report::new(self, kind, stack, version);
+        for (name, value) in details {
+            if report.details.contains_key(*name) || report.details.len() >= MAX_DETAILS {
+                continue;
+            }
+            if let Some(text) = self.details.get(*name).and_then(|k| detail_text(k, value)) {
+                report.details.insert((*name).to_string(), text);
+            }
+        }
+        report
     }
 
     /// Keeps at most `max` frames of a stack (the innermost ones) instead of [`MAX_FRAMES`].
@@ -438,12 +457,6 @@ pub(crate) fn plain_kind(raw: &str) -> String {
     }
 }
 
-/// Whether `raw` is a whole number in decimal: an optional `-`, then 1 to 18 digits.
-fn is_whole_number(raw: &str) -> bool {
-    let digits = raw.strip_prefix('-').unwrap_or(raw);
-    (1..=18).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_digit())
-}
-
 /// A function name as a stack prints it, if it is only an identifier path.
 fn function_name(raw: &str) -> Option<&str> {
     let plain = !raw.is_empty()
@@ -494,36 +507,46 @@ mod tests {
     }
 
     #[test]
-    fn a_detail_is_a_plain_identifier_or_a_whole_number_under_a_plain_name() {
-        let report = Report::new(&shell(), "Engine", "", VERSION)
-            .detail("status", "500")
-            .detail("code", "engine-start")
-            .detail("offset", "-3")
-            .detail("path", "C:\\Users\\someone\\notes.md")
-            .detail("note", "the person's words")
-            .detail("2fast", "x")
-            .detail("bad name", "x")
-            .detail("big", "1234567890123456789");
+    fn a_detail_is_kept_only_when_the_registry_declares_it_for_the_layer_and_of_its_kind() {
+        let registry = crate::Registry::from_json(
+            r#"{ "reports": { "shell": {
+                "status": { "kind": "count", "bucket": [0, 100, 200, 400] },
+                "phase": { "kind": "choice", "values": ["read", "write"] },
+                "retried": { "kind": "bool" } } } }"#,
+        )
+        .unwrap();
+        let layer = registry.layer("shell", FrameRule::rust_source());
+        let report = layer.report(
+            "Engine",
+            "",
+            VERSION,
+            &[
+                ("status", "503"),
+                ("phase", r"C:\Users\someone\notes.md"),
+                ("retried", "true"),
+                ("note", "the person's words"),
+                ("code", "engine-start"),
+                ("status", "200"),
+            ],
+        );
         assert_eq!(
             report.details.into_iter().collect::<Vec<_>>(),
             [
-                ("code".to_string(), "engine-start".to_string()),
-                ("offset".to_string(), "-3".to_string()),
-                ("status".to_string(), "500".to_string()),
-            ]
+                ("retried".to_string(), "true".to_string()),
+                ("status".to_string(), "400".to_string()),
+            ],
+            "503 lands on its bucket; an undeclared or off-kind detail is left out; a name given twice keeps its first"
         );
-    }
-
-    #[test]
-    fn a_report_carries_at_most_a_few_details_and_a_name_given_again_replaces_its_value() {
-        let mut report = Report::new(&shell(), "Engine", "", VERSION);
-        for i in 0..MAX_DETAILS + 3 {
-            report = report.detail(&format!("d{i}"), "x");
-        }
-        assert_eq!(report.details.len(), MAX_DETAILS);
-        let report = report.detail("d0", "y");
-        assert_eq!(report.details["d0"], "y");
-        assert_eq!(report.details.len(), MAX_DETAILS);
+        let plain = Layer::new("shell", FrameRule::rust_source()).report(
+            "Engine",
+            "",
+            VERSION,
+            &[("status", "500")],
+        );
+        assert!(
+            plain.details.is_empty(),
+            "a layer without a registry carries no details"
+        );
     }
 
     #[test]
@@ -533,7 +556,12 @@ mod tests {
         let line = r#"{"layer":"shell","kind":"Engine","frames":[],"version":"1.2.3","os":"windows","arch":"x86_64","time":"2026-10-01T00:00:00Z"}"#;
         let read: Report = serde_json::from_str(line).unwrap();
         assert!(read.details.is_empty());
-        let with = report.detail("status", "409");
+        let with = crate::Registry::from_json(
+            r#"{"reports":{"shell":{"status":{"kind":"count","max":1000}}}}"#,
+        )
+        .unwrap()
+        .layer("shell", FrameRule::rust_source())
+        .report("Engine", "", VERSION, &[("status", "409")]);
         let again: Report = serde_json::from_str(&serde_json::to_string(&with).unwrap()).unwrap();
         assert_eq!(again, with);
     }
@@ -569,6 +597,31 @@ mod tests {
             wire.is_ascii(),
             "only identifiers and file names of the app's own code: {wire}"
         );
+    }
+
+    #[test]
+    fn no_declared_detail_can_carry_what_no_report_may_carry() {
+        let layer = crate::Registry::from_json(
+            r#"{ "reports": { "shell": {
+                "status": { "kind": "count", "bucket": [0, 100, 200, 400] },
+                "phase": { "kind": "choice", "values": ["read", "write"] },
+                "flags": { "kind": "set", "values": ["a", "b"] },
+                "took": { "kind": "duration" },
+                "retried": { "kind": "bool" } } } }"#,
+        )
+        .unwrap()
+        .layer("shell", FrameRule::rust_source());
+        for bad in FORBIDDEN {
+            // A duration is a number by design — milliseconds up to a day, exact — so a bare number
+            // in the corpus (a salary) is one; every other kind keeps it out (a count on its bucket).
+            let numeric = bad.bytes().all(|b| b.is_ascii_digit());
+            let details: Vec<_> = ["status", "phase", "flags", "took", "retried"]
+                .iter()
+                .filter(|name| !(numeric && **name == "took"))
+                .map(|name| (*name, *bad))
+                .collect();
+            assert_clean(&layer.report("Engine", "", VERSION, &details));
+        }
     }
 
     #[test]

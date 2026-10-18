@@ -55,6 +55,17 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   back through `Registry::verify`; `Sink::event_item` makes the Application Insights event, with no
   location derived from the connection.
 
+### Changed
+
+- `tauri-kit-diagnostics` (**breaking**, a privacy fix): a report's details are only those the app's registry
+  declares for the layer, each of its kind. `Report::detail` is gone — it took any plain identifier or a
+  number of up to 18 digits under any name, which could carry an identifier from the data. A layer now comes
+  from `Registry::layer(name, rule)` (the registry's new `reports` section: `{ "<layer>": { "<detail>": {
+  "kind": … } } }`) and makes reports with `Layer::report(kind, stack, version, &[(name, value)])`: a value
+  (untrusted text) is kept when it is of the declared kind — a count lands on its bucket — and left out whole
+  otherwise. A layer made with `Layer::new` carries no details. The report line keeps its shape (details are
+  still text), so queued reports read as before.
+
 ## [0.21.0] - 2026-10-17
 
 ### Added
