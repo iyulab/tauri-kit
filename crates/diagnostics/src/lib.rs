@@ -105,9 +105,9 @@ mod stream;
 mod appinsights;
 
 pub use event::{
-    pending_events, Event, EventLine, EventName, Events, FieldKind, Recorded, Registry,
-    RegistryError, Value, Why, DROPPED_EVENT, MAX_COUNT, MAX_DURATION, MAX_FIELDS, MAX_PER_EVENT,
-    MAX_VALUES,
+    pending_events, pending_reports, Event, EventLine, EventName, Events, FieldKind, Recorded,
+    Registry, RegistryError, Value, Why, DROPPED_EVENT, MAX_COUNT, MAX_DURATION, MAX_FIELDS,
+    MAX_PER_EVENT, MAX_VALUES,
 };
 pub use queue::{mark_sent, pending, unsent, Batch, Pending, Reporter, CAPPED_KIND, MAX_REPORTS};
 pub use report::{

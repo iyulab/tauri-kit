@@ -91,8 +91,9 @@ impl Report {
 /// A part of the app that fails on its own — its UI, its Rust process, a helper process — and
 /// the rule that tells its own frames from everything else in a stack it hands over.
 ///
-/// The name is written into every report of the layer as it is given, so it should be a fixed
-/// name of the app's own, such as `"ui"` or `"host"`.
+/// The name is written into every report of the layer as it is given: a fixed name of the app's own,
+/// a plain identifier such as `"ui"` or `"host"` — a report under any other name does not verify on the
+/// way back ([`crate::Registry::verify_report`]) and is never sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layer {
     name: String,
@@ -102,10 +103,16 @@ pub struct Layer {
 }
 
 impl Layer {
-    /// A layer named `name`, whose frames `rule` picks, keeping at most [`MAX_FRAMES`] of them.
+    /// A layer named `name` — a plain identifier — whose frames `rule` picks, keeping at most
+    /// [`MAX_FRAMES`] of them.
     pub fn new(name: impl Into<String>, rule: impl Into<FrameRule>) -> Self {
+        let name = name.into();
+        debug_assert!(
+            plain_kind(&name) == name,
+            "a layer's name is a plain identifier, not {name:?}"
+        );
         Layer {
-            name: name.into(),
+            name,
             rule: rule.into(),
             max_frames: MAX_FRAMES,
             details: Arc::default(),
@@ -454,6 +461,25 @@ pub(crate) fn plain_kind(raw: &str) -> String {
         raw.to_string()
     } else {
         UNRECOGNIZED_KIND.to_string()
+    }
+}
+
+/// Whether `raw` is a frame as a [`FrameRule`] writes one: a method name (.NET), `function file:line:col`
+/// (a web bundle — `?` for a function that was not plain) or `folder/file:line:col` (Rust source). What a
+/// sender reads back is held to this ([`crate::Registry::verify_report`]), so a frame edited into a file is
+/// never sent.
+pub(crate) fn is_frame(raw: &str) -> bool {
+    match raw.split_once(' ') {
+        Some((function, at)) => {
+            (function == "?" || function_name(function).is_some())
+                && position(at).is_some_and(|(file, _)| plain_name(file))
+        }
+        None => match position(raw) {
+            Some((path, _)) => path
+                .split('/')
+                .all(|segment| plain_name(segment) && !segment.starts_with('.')),
+            None => function_name(raw).is_some(),
+        },
     }
 }
 
@@ -881,5 +907,92 @@ notes/client.md",
         let at = |s| std::time::UNIX_EPOCH + std::time::Duration::from_secs(s);
         assert_eq!(utc(at(0)), "1970-01-01T00:00:00Z");
         assert_eq!(utc(at(951_782_400)), "2000-02-29T00:00:00Z");
+    }
+
+    fn registry() -> crate::Registry {
+        crate::Registry::from_json(
+            r#"{ "reports": { "host": {
+                "status": { "kind": "choice", "values": ["timeout", "refused"] },
+                "attempt": { "kind": "count", "bucket": [0, 1, 2, 4] } } } }"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn every_report_a_layer_writes_verifies_on_the_way_back() {
+        let registry = registry();
+        let host = registry.layer("host", FrameRule::dotnet_method());
+        let reports = [
+            Report::new(
+                &ui(),
+                "TypeError",
+                "at save (http://tauri.localhost/assets/index-a1.js:3:120)\nat <anonymous> (http://tauri.localhost/assets/x.js:1:2)",
+                VERSION,
+            ),
+            Report::new(
+                &Layer::new("shell", FrameRule::rust_source()),
+                "Panic",
+                "src/main.rs:42:9",
+                VERSION,
+            ),
+            host.report(
+                "System.IO.IOException",
+                "   at Contoso.Writer.Flush(Stream s) in C:\\src\\Writer.cs:line 42",
+                VERSION,
+                &[("status", "timeout"), ("attempt", "3")],
+            ),
+            Report::new(&ui(), "a message, not a kind", "", VERSION),
+            Report::new(&ui(), "TypeError", "", VERSION).of_kind(crate::CAPPED_KIND),
+        ];
+        assert!(
+            reports[..3].iter().all(|r| !r.frames.is_empty()),
+            "a frame of each rule is there to check"
+        );
+        for report in reports {
+            assert_eq!(registry.verify_report(report.clone()), Some(report));
+        }
+    }
+
+    #[test]
+    fn a_report_edited_into_a_file_is_not_sent() {
+        let registry = registry();
+        let good = registry.layer("host", FrameRule::dotnet_method()).report(
+            "Failed",
+            "",
+            VERSION,
+            &[("status", "timeout")],
+        );
+        let edited = |f: &dyn Fn(&mut Report)| {
+            let mut r = good.clone();
+            f(&mut r);
+            registry.verify_report(r)
+        };
+        assert!(
+            edited(&|r| {
+                r.details.insert("path".into(), "salaries".into());
+            })
+            .is_none(),
+            "an undeclared detail"
+        );
+        assert!(
+            edited(&|r| {
+                r.details.insert("attempt".into(), "3".into());
+            })
+            .is_none(),
+            "a count not on its bucket"
+        );
+        assert!(edited(&|r| r.frames.push("C:/Users/someone/salaries.xlsx:1:1".into())).is_none());
+        assert!(edited(&|r| r.frames.push("save ../../etc/passwd:1:1".into())).is_none());
+        assert!(edited(&|r| r.frames.push("a frame with words".into())).is_none());
+        assert!(edited(&|r| r.kind = "Failed for Kim".into()).is_none());
+        assert!(edited(&|r| r.layer = "host process".into()).is_none());
+        assert!(edited(&|r| r.version = "1.2.3 (someone's build)".into()).is_none());
+        assert!(
+            crate::Registry::default()
+                .verify_report(good.clone())
+                .is_none(),
+            "details another registry declared"
+        );
+        assert_eq!(registry.verify_report(good.clone()), Some(good));
     }
 }

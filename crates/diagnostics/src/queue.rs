@@ -119,18 +119,20 @@ pub struct Batch {
     pub end: usize,
 }
 
-/// The reports `file` has gained since the offset `sent` records, in the batches they go out in.
+/// The reports a segment's `file` has gained since the offset `sent` records, each verified by
+/// `registry` ([`Registry::verify_report`](crate::Registry::verify_report) — a line that does not verify
+/// is passed over), in the batches they go out in.
 ///
 /// For an app that sends with an HTTP client of its own — with the `appinsights` feature,
 /// `Sink::send_pending` does all of it. Send the batches in order and record each one with
 /// [`mark_sent`] once it is handled; stop at the first that is not, so it and those after it are
-/// read again next time. It is [`pending`] for a file of [`Report`]s.
+/// read again next time. It is [`pending_reports`](crate::pending_reports) as batches.
 ///
 /// Only whole lines are read: a last line without its newline (one still being written) is left
 /// for later, and a line that is not a report is passed over. A `file` shorter than what `sent`
 /// records is a new file and is read from its start; a missing `file` has nothing unsent.
-pub fn unsent(file: &Path, sent: &Path) -> io::Result<Vec<Batch>> {
-    Ok(pending::<Report>(file, sent)?
+pub fn unsent(registry: &crate::Registry, file: &Path, sent: &Path) -> io::Result<Vec<Batch>> {
+    Ok(crate::pending_reports(registry, file, sent)?
         .into_iter()
         .map(|p| Batch {
             reports: p.items,
@@ -307,7 +309,11 @@ mod tests {
             dir.path().join("reports.jsonl"),
             dir.path().join("reports.sent"),
         );
-        assert_eq!(unsent(&file, &sent).unwrap(), Vec::new(), "a missing file");
+        assert_eq!(
+            unsent(&crate::Registry::default(), &file, &sent).unwrap(),
+            Vec::new(),
+            "a missing file"
+        );
 
         let reporter = Reporter::new(&file).max_reports(BATCH + 10);
         for i in 0..BATCH + 1 {
@@ -315,7 +321,7 @@ mod tests {
                 .record(Report::new(&ui(), &format!("Failure{i}"), "", "1.2.3"))
                 .unwrap();
         }
-        let batches = unsent(&file, &sent).unwrap();
+        let batches = unsent(&crate::Registry::default(), &file, &sent).unwrap();
         assert_eq!(batches.len(), 2);
         assert_eq!(batches[0].reports.len(), BATCH);
         assert_eq!(batches[1].reports[0].kind, format!("Failure{BATCH}"));
@@ -325,10 +331,13 @@ mod tests {
 
         // The first batch handled, the second not: only the second is read again.
         mark_sent(&sent, batches[0].end).unwrap();
-        let again = unsent(&file, &sent).unwrap();
+        let again = unsent(&crate::Registry::default(), &file, &sent).unwrap();
         assert_eq!(again, batches[1..].to_vec());
         mark_sent(&sent, again[0].end).unwrap();
-        assert_eq!(unsent(&file, &sent).unwrap(), Vec::new());
+        assert_eq!(
+            unsent(&crate::Registry::default(), &file, &sent).unwrap(),
+            Vec::new()
+        );
     }
 
     #[test]
@@ -340,7 +349,7 @@ mod tests {
         );
         let report = serde_json::to_string(&Report::new(&ui(), "RangeError", "", "1.2.3")).unwrap();
         std::fs::write(&file, format!("not a report\n{report}\n{{\"layer\":\"ui\"")).unwrap();
-        let batches = unsent(&file, &sent).unwrap();
+        let batches = unsent(&crate::Registry::default(), &file, &sent).unwrap();
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0].reports.len(), 1);
         assert_eq!(batches[0].end, "not a report\n".len() + report.len() + 1);
@@ -348,7 +357,7 @@ mod tests {
         // A stretch of nothing but other lines is still a batch, so it can be recorded as sent.
         std::fs::write(&file, "not a report\n").unwrap();
         std::fs::remove_file(&sent).unwrap_or_default();
-        let batches = unsent(&file, &sent).unwrap();
+        let batches = unsent(&crate::Registry::default(), &file, &sent).unwrap();
         assert_eq!(batches.len(), 1);
         assert!(batches[0].reports.is_empty());
     }
@@ -364,6 +373,11 @@ mod tests {
         Reporter::new(&file)
             .record(Report::new(&ui(), "TypeError", "", "1.2.3"))
             .unwrap();
-        assert_eq!(unsent(&file, &sent).unwrap()[0].reports.len(), 1);
+        assert_eq!(
+            unsent(&crate::Registry::default(), &file, &sent).unwrap()[0]
+                .reports
+                .len(),
+            1
+        );
     }
 }

@@ -30,9 +30,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::queue::append_line;
-use crate::report::utc;
+use crate::report::{is_frame, plain_kind, utc};
 use crate::session::{is_id, is_platform, is_time, is_version, random_id};
-use crate::{pending, Pending, Session};
+use crate::{pending, Pending, Report, Session, MAX_DETAILS, MAX_FRAMES};
 
 /// The event [`Events`] writes when it drops one: `reason` (`unknown_field`, `bad_value`, `capped`),
 /// the declared `event`, and for a bad value the declared `field` — never a name or a value the
@@ -153,8 +153,9 @@ impl<'de, V: Deserialize<'de>> Deserialize<'de> for Unique<V> {
     }
 }
 
-/// The events an app may write, each with its fields — see the [module](self) and [`Events`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The events an app may write, each with its fields — see the [module](self) and [`Events`]. The
+/// default declares nothing: for an app with no events, whose reports carry no details.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Registry {
     events: Arc<BTreeMap<String, BTreeMap<String, FieldKind>>>,
     reports: Arc<BTreeMap<String, Arc<BTreeMap<String, FieldKind>>>>,
@@ -283,6 +284,33 @@ impl Registry {
                 })
         };
         (head_ok && fields_ok).then_some(Event(line))
+    }
+
+    /// Whether `report` is one this registry's layers would write: the layer and kind plain identifiers
+    /// (the kind maybe [`UNRECOGNIZED_KIND`](crate::UNRECOGNIZED_KIND) or [`CAPPED_KIND`](crate::CAPPED_KIND)),
+    /// at most [`MAX_FRAMES`] frames, each as a [`FrameRule`](crate::FrameRule) writes one, each detail
+    /// declared for the layer under `reports` and written as its kind writes it, and the version, platform
+    /// and time well formed. What a sender reads back goes through this ([`pending_reports`]), so a line
+    /// edited into a file — or written by a process holding another registry — is never sent.
+    pub fn verify_report(&self, report: Report) -> Option<Report> {
+        let plain = |raw: &str| plain_kind(raw) == raw;
+        let head_ok = plain(&report.layer)
+            && plain(&report.kind)
+            && is_version(&report.version)
+            && is_platform(&report.os)
+            && is_platform(&report.arch)
+            && is_time(&report.time);
+        let frames_ok =
+            report.frames.len() <= MAX_FRAMES && report.frames.iter().all(|f| is_frame(f));
+        let declared = self.reports.get(&report.layer);
+        let details_ok = report.details.len() <= MAX_DETAILS
+            && report.details.iter().all(|(name, value)| {
+                declared
+                    .and_then(|d| d.get(name))
+                    .and_then(|kind| detail_text(kind, value))
+                    .is_some_and(|text| &text == value)
+            });
+        (head_ok && frames_ok && details_ok).then_some(report)
     }
 
     fn dropped_ok(&self, fields: &BTreeMap<String, serde_json::Value>) -> bool {
@@ -682,6 +710,27 @@ impl Events {
             fields,
         }
     }
+}
+
+/// The reports `file` has gained since the offset `sent` records, each verified by `registry`
+/// ([`Registry::verify_report`]) — a line that does not verify is passed over and counted as handled.
+/// Read it as [`pending`].
+pub fn pending_reports(
+    registry: &Registry,
+    file: &Path,
+    sent: &Path,
+) -> io::Result<Vec<Pending<Report>>> {
+    Ok(pending::<Report>(file, sent)?
+        .into_iter()
+        .map(|p| Pending {
+            items: p
+                .items
+                .into_iter()
+                .filter_map(|report| registry.verify_report(report))
+                .collect(),
+            end: p.end,
+        })
+        .collect())
 }
 
 /// The events `file` has gained since the offset `sent` records, each verified by `registry` — a line

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tauri_kit_diagnostics::{
-    pending, pending_events, Events, FrameRule, InstallId, Recorded, Registry, Report, Reporter,
+    pending_events, pending_reports, Events, FrameRule, InstallId, Recorded, Registry, Reporter,
     Session, Value, Why,
 };
 
@@ -145,7 +145,7 @@ fn normalized_reports(text: &str) -> Vec<serde_json::Value> {
 fn every_report_the_dotnet_side_writes_reads_as_a_report_and_matches_the_same_scene_here() {
     let dir = tempfile::tempdir().unwrap();
     let file = cases().join("dotnet-reports.jsonl");
-    let read = pending::<Report>(&file, &dir.path().join("sent")).unwrap();
+    let read = pending_reports(&registry(), &file, &dir.path().join("sent")).unwrap();
     let kinds: Vec<_> = read
         .iter()
         .flat_map(|p| p.items.iter().map(|r| r.kind.clone()))

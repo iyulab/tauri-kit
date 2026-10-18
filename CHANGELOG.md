@@ -79,6 +79,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   rewritten, so two instances, or a shell and its backend, no longer lose each other's lines. `adopt(dir, file,
   sent)` takes in the single file a stream was kept in, with what it had sent, as one ended segment. `pending`,
   `unsent` and `mark_sent` read and record one segment, as before.
+- `tauri-kit-diagnostics` (**breaking**): reports are verified on the way back, as events are. `pending_reports` and
+  `unsent` take the registry and pass over a line `Registry::verify_report` refuses — a layer or kind that is not a
+  plain identifier, a frame no `FrameRule` writes, a detail the registry does not declare for the layer or not
+  written as its kind writes it, a malformed version, platform or time — so a line edited into a segment, or
+  written by a process holding another registry, is never sent. `Sink::send_pending(agent, registry, dir)`;
+  `Registry::default()` declares nothing, for an app whose reports carry no details. A layer's name is a plain
+  identifier (`Layer::new` checks it in debug builds; `TauriKit.Diagnostics` throws).
 - `tauri-kit-diagnostics` (**breaking**): `SessionBuilder::start(file, running)` takes a folder of running
   sessions instead of one marker file. Each session keeps its own marker there beside a lock it holds while it
   runs, and a starting session records as unfinished only those whose lock nobody holds — their process is

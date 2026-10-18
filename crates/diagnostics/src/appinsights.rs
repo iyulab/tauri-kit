@@ -5,7 +5,8 @@ use std::io;
 use std::path::Path;
 
 use crate::{
-    mark_sent, pending, pending_events, segments, Pending, Registry, Report, Sink, Telemetry,
+    mark_sent, pending, pending_events, pending_reports, segments, Pending, Registry, Sink,
+    Telemetry,
 };
 
 impl Sink {
@@ -31,12 +32,24 @@ impl Sink {
             .into()
     }
 
-    /// Sends the reports the stream kept in `dir` has gained since the last send —
-    /// [`Sink::send_pending_of`] for a stream of [`Report`]s.
+    /// Sends the reports the stream kept in `dir` has gained since the last send — each verified by
+    /// `registry` first ([`pending_reports`]), so a line edited into a segment is never sent — the way
+    /// [`Sink::send_pending_of`] sends. An app with no registry passes [`Registry::default`].
     ///
     /// Returns how many reports the endpoint took.
-    pub fn send_pending(&self, agent: &ureq::Agent, dir: &Path) -> io::Result<usize> {
-        self.send_pending_of::<Report>(agent, dir)
+    pub fn send_pending(
+        &self,
+        agent: &ureq::Agent,
+        registry: &Registry,
+        dir: &Path,
+    ) -> io::Result<usize> {
+        let mut count = 0;
+        for segment in segments(dir)? {
+            let stretches = pending_reports(registry, &segment.file, &segment.sent)?;
+            count +=
+                self.send_stretches(agent, stretches, &segment.sent, |report| report.items(self))?;
+        }
+        Ok(count)
     }
 
     /// Sends the lines the [`segments`](crate::segments) of a stream of `T` — reports,
@@ -201,7 +214,11 @@ mod tests {
             .unwrap();
 
         let (sink, server) = endpoint(vec![200]);
-        assert_eq!(sink.send_pending(&loopback(), &stream).unwrap(), 2);
+        assert_eq!(
+            sink.send_pending(&loopback(), &Registry::default(), &stream)
+                .unwrap(),
+            2
+        );
         let bodies = server.join().unwrap();
         let items = bodies[0].as_array().unwrap();
         assert_eq!(items.len(), 2);
@@ -212,7 +229,11 @@ mod tests {
         assert_eq!(items[1]["tags"]["ai.cloud.role"], "host");
 
         // Nothing new: no request at all.
-        assert_eq!(sink.send_pending(&loopback(), &stream).unwrap(), 0);
+        assert_eq!(
+            sink.send_pending(&loopback(), &Registry::default(), &stream)
+                .unwrap(),
+            0
+        );
 
         // Only what came after.
         reporter
@@ -224,7 +245,11 @@ mod tests {
             ))
             .unwrap();
         let (sink, server) = endpoint(vec![200]);
-        assert_eq!(sink.send_pending(&loopback(), &stream).unwrap(), 1);
+        assert_eq!(
+            sink.send_pending(&loopback(), &Registry::default(), &stream)
+                .unwrap(),
+            1
+        );
         assert_eq!(
             server.join().unwrap()[0][0]["data"]["baseData"]["exceptions"][0]["typeName"],
             "Panic"
@@ -242,7 +267,11 @@ mod tests {
                 .unwrap();
         }
         let (sink, server) = endpoint(vec![200, 200]);
-        assert_eq!(sink.send_pending(&loopback(), &stream).unwrap(), BATCH + 1);
+        assert_eq!(
+            sink.send_pending(&loopback(), &Registry::default(), &stream)
+                .unwrap(),
+            BATCH + 1
+        );
         let bodies = server.join().unwrap();
         assert_eq!(bodies[0].as_array().unwrap().len(), BATCH);
         assert_eq!(bodies[1].as_array().unwrap().len(), 1);
@@ -258,12 +287,18 @@ mod tests {
 
         for busy in [503, 429, 408] {
             let (sink, server) = endpoint(vec![busy]);
-            assert!(sink.send_pending(&loopback(), &stream).is_err());
+            assert!(sink
+                .send_pending(&loopback(), &Registry::default(), &stream)
+                .is_err());
             server.join().unwrap();
         }
 
         let (sink, server) = endpoint(vec![200]);
-        assert_eq!(sink.send_pending(&loopback(), &stream).unwrap(), 1);
+        assert_eq!(
+            sink.send_pending(&loopback(), &Registry::default(), &stream)
+                .unwrap(),
+            1
+        );
         server.join().unwrap();
     }
 
@@ -276,10 +311,18 @@ mod tests {
             .unwrap();
 
         let (sink, server) = endpoint(vec![400]);
-        assert_eq!(sink.send_pending(&loopback(), &stream).unwrap(), 0);
+        assert_eq!(
+            sink.send_pending(&loopback(), &Registry::default(), &stream)
+                .unwrap(),
+            0
+        );
         server.join().unwrap();
         // The line counts as handled: a second send makes no request.
-        assert_eq!(sink.send_pending(&loopback(), &stream).unwrap(), 0);
+        assert_eq!(
+            sink.send_pending(&loopback(), &Registry::default(), &stream)
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -296,7 +339,11 @@ mod tests {
         .unwrap();
 
         let (sink, server) = endpoint(vec![200]);
-        assert_eq!(sink.send_pending(&loopback(), &stream).unwrap(), 1);
+        assert_eq!(
+            sink.send_pending(&loopback(), &Registry::default(), &stream)
+                .unwrap(),
+            1
+        );
         let bodies = server.join().unwrap();
         assert_eq!(bodies[0].as_array().unwrap().len(), 1);
         assert_eq!(
@@ -315,7 +362,11 @@ mod tests {
             .unwrap();
 
         let (sink, server) = endpoint(vec![200]);
-        assert_eq!(sink.send_pending(&loopback(), &stream).unwrap(), 1);
+        assert_eq!(
+            sink.send_pending(&loopback(), &Registry::default(), &stream)
+                .unwrap(),
+            1
+        );
         server.join().unwrap();
     }
 
@@ -375,7 +426,11 @@ mod tests {
             instrumentation_key: "k".into(),
             track_url: "http://127.0.0.1:9/v2.1/track".into(),
         };
-        assert_eq!(sink.send_pending(&loopback(), &stream).unwrap(), 0);
+        assert_eq!(
+            sink.send_pending(&loopback(), &Registry::default(), &stream)
+                .unwrap(),
+            0
+        );
     }
 
     /// Sends one report to a real resource over HTTPS — the OS's TLS and certificate store. Run by
@@ -396,6 +451,10 @@ mod tests {
                 env!("CARGO_PKG_VERSION"),
             ))
             .unwrap();
-        assert_eq!(sink.send_pending(&Sink::agent(), &stream).unwrap(), 1);
+        assert_eq!(
+            sink.send_pending(&Sink::agent(), &Registry::default(), &stream)
+                .unwrap(),
+            1
+        );
     }
 }

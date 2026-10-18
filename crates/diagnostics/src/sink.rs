@@ -41,31 +41,32 @@ fn timespan(seconds: u64) -> String {
 
 /// Where reports go: an Application Insights resource, named by its connection string.
 ///
-/// With the `appinsights` or `appinsights-rustls` feature, `Sink::send_pending` sends what a report
-/// file gained since the last send. Without either, a sink still makes what goes out — the track
-/// URL and one item per report ([`Sink::envelope`]) — for an app that sends with an HTTP client of
-/// its own, reading the file with [`unsent`](crate::unsent) and recording what was handled with
-/// [`mark_sent`](crate::mark_sent):
+/// With the `appinsights` or `appinsights-rustls` feature, `Sink::send_pending` sends what a reports
+/// stream's segments gained since the last send. Without either, a sink still makes what goes out — the
+/// track URL and one item per report ([`Sink::envelope`]) — for an app that sends with an HTTP client of
+/// its own, reading each segment ([`segments`](crate::segments)) with [`unsent`](crate::unsent) and
+/// recording what was handled with [`mark_sent`](crate::mark_sent):
 ///
 /// ```no_run
 /// use std::path::Path;
-/// use tauri_kit_diagnostics::{mark_sent, unsent, Sink};
+/// use tauri_kit_diagnostics::{mark_sent, segments, unsent, Registry, Sink};
 ///
 /// # fn post(url: &str, body: &[u8]) -> std::io::Result<u16> { Ok(200) }
+/// # let registry = Registry::default();
 /// // The connection string is usually baked in at build time; a build without one sends nothing.
 /// if let Some(sink) = option_env!("MY_APP_APPINSIGHTS_CONNECTION_STRING").and_then(Sink::parse) {
-///     let dir = Path::new("/path/to/logs");
-///     let (file, sent) = (dir.join("reports.jsonl"), dir.join("reports.sent"));
-///     for batch in unsent(&file, &sent)? {
-///         if !batch.reports.is_empty() {
-///             let items: Vec<_> = batch.reports.iter().map(|r| sink.envelope(r)).collect();
-///             let status = post(&sink.track_url, &serde_json::to_vec(&items)?)?;
-///             // Busy, throttled or down: leave this batch and the rest for later.
-///             if Sink::retry_later(status) {
-///                 break;
+///     'segments: for segment in segments(Path::new("/path/to/logs/reports"))? {
+///         for batch in unsent(&registry, &segment.file, &segment.sent)? {
+///             if !batch.reports.is_empty() {
+///                 let items: Vec<_> = batch.reports.iter().map(|r| sink.envelope(r)).collect();
+///                 let status = post(&sink.track_url, &serde_json::to_vec(&items)?)?;
+///                 // Busy, throttled or down: leave this batch and the rest for later.
+///                 if Sink::retry_later(status) {
+///                     break 'segments;
+///                 }
 ///             }
+///             mark_sent(&segment.sent, batch.end)?;
 ///         }
-///         mark_sent(&sent, batch.end)?;
 ///     }
 /// }
 /// # Ok::<(), std::io::Error>(())

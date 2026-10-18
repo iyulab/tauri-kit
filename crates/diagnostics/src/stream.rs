@@ -206,7 +206,7 @@ pub(crate) fn hold(dir: &Path, id: &str) -> Option<(File, PathBuf)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{mark_sent, unsent, FrameRule, Layer, Report, Reporter};
+    use crate::{mark_sent, unsent, FrameRule, Layer, Registry, Report, Reporter};
 
     fn ui() -> Layer {
         Layer::new("ui", FrameRule::web_bundle())
@@ -221,7 +221,7 @@ mod tests {
     fn send_all(dir: &Path) -> Vec<String> {
         let mut kinds = Vec::new();
         for segment in segments(dir).unwrap() {
-            for batch in unsent(&segment.file, &segment.sent).unwrap() {
+            for batch in unsent(&Registry::default(), &segment.file, &segment.sent).unwrap() {
                 kinds.extend(batch.reports.iter().map(|r| r.kind.clone()));
                 mark_sent(&segment.sent, batch.end).unwrap();
             }
@@ -320,7 +320,7 @@ mod tests {
         );
         let reporter = Reporter::new(&old);
         report(&reporter, "SentBefore");
-        let first = unsent(&old, &old_sent).unwrap();
+        let first = unsent(&Registry::default(), &old, &old_sent).unwrap();
         mark_sent(&old_sent, first[0].end).unwrap();
         report(&reporter, "NotYet");
 

@@ -97,8 +97,8 @@ public sealed record Report
 /// <summary>
 /// A part of the app that fails on its own — for the .NET side, the backend process — and the details its reports may
 /// carry. Make it with <see cref="Registry.Layer(string)"/>, or with <see cref="Layer(string)"/> for a layer whose reports carry
-/// no details. The name is written into every report as it is given, so it should be a fixed name of the app's own,
-/// such as <c>"host"</c>.
+/// no details. The name is written into every report as it is given: a fixed name of the app's own, a plain identifier
+/// such as <c>"host"</c> — the shell sends a report only when it verifies, and a report under any other name does not.
 /// </summary>
 public sealed class Layer
 {
@@ -115,6 +115,7 @@ public sealed class Layer
     internal Layer(string name, IReadOnlyDictionary<string, FieldKind> details)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
+        if (PlainKind(name) != name) throw new ArgumentException("A layer's name is a plain identifier.", nameof(name));
         Name = name;
         _details = details;
     }

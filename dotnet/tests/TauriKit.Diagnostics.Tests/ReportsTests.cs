@@ -103,6 +103,14 @@ public sealed class ReportsTests : IDisposable
         Assert.Contains(why, e.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void A_layer_is_named_by_a_plain_identifier()
+    {
+        Assert.Throws<ArgumentException>(() => new Layer("host process"));
+        Assert.Throws<ArgumentException>(() => Shared().Layer("C:/Users/someone/"));
+        Assert.Equal("host", new Layer("host").Name);
+    }
+
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static void Throw() => throw new InvalidOperationException("C:/Users/someone/salaries.xlsx");
 }
