@@ -34,7 +34,8 @@ public sealed class RegistryException(string message) : Exception(message);
 /// rules: a name that is not a plain lowercase identifier or starts with <c>kit.</c>, more than eight fields, a
 /// count without a bucket or a cap (or a cap over 1000, or bucket bounds that do not start at 0 and at least double
 /// after the first non-zero one), a choice or set without plain values, a duration cap over a day, a name given twice.
-/// Embed the file in the app rather than reading it at run time: whoever can edit it decides what is written.
+/// Its <c>reports</c> (<c>{ "&lt;layer&gt;": { "&lt;detail&gt;": { "kind": … } } }</c>) declare, by the same rules, the details
+/// each layer's reports may carry (<see cref="Layer(string)"/>). Embed the file in the app rather than reading it at run time: whoever can edit it decides what is written.
 /// </summary>
 public sealed class Registry
 {
@@ -50,10 +51,19 @@ public sealed class Registry
     /// <summary>The longest duration, in milliseconds: one day.</summary>
     public const ulong MaxDurationMs = 86_400_000;
 
-    internal Registry(IReadOnlyDictionary<string, IReadOnlyDictionary<string, FieldKind>> events) => Events = events;
+    internal Registry(
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, FieldKind>> events,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, FieldKind>> reports)
+    {
+        Events = events;
+        Reports = reports;
+    }
 
     /// <summary>The declared events and their fields.</summary>
     public IReadOnlyDictionary<string, IReadOnlyDictionary<string, FieldKind>> Events { get; }
+
+    /// <summary>The details each layer's reports may carry, by layer name (the registry's <c>reports</c>).</summary>
+    public IReadOnlyDictionary<string, IReadOnlyDictionary<string, FieldKind>> Reports { get; }
 
     /// <summary>Reads and checks a registry.</summary>
     /// <exception cref="RegistryException">The registry is not one, or could carry text.</exception>
@@ -95,9 +105,35 @@ public sealed class Registry
                 }
             }
 
-            return new Registry(new ReadOnlyDictionary<string, IReadOnlyDictionary<string, FieldKind>>(events));
+            var reports = new SortedDictionary<string, IReadOnlyDictionary<string, FieldKind>>(StringComparer.Ordinal);
+            if (root.TryGetValue("reports", out var reportsElement))
+            {
+                foreach (var (layer, detailsElement) in Object(reportsElement, "reports", null))
+                {
+                    var details = new SortedDictionary<string, FieldKind>(StringComparer.Ordinal);
+                    foreach (var (detail, kindElement) in Object(detailsElement, $"layer '{layer}'", null))
+                    {
+                        if (!IsFieldName(detail)) throw new RegistryException($"'{layer}.{detail}' is not a plain lowercase detail name");
+                        details[detail] = Kind(kindElement, $"'{layer}.{detail}'");
+                    }
+
+                    if (details.Count > MaxFields) throw new RegistryException($"layer '{layer}' has more than {MaxFields} details");
+                    reports[layer] = new ReadOnlyDictionary<string, FieldKind>(details);
+                }
+            }
+
+            return new Registry(
+                new ReadOnlyDictionary<string, IReadOnlyDictionary<string, FieldKind>>(events),
+                new ReadOnlyDictionary<string, IReadOnlyDictionary<string, FieldKind>>(reports));
         }
     }
+
+    /// <summary>
+    /// A <see cref="Diagnostics.Layer"/> named <paramref name="name"/> carrying the details this registry declares for it under
+    /// <c>reports</c> — none, if it declares none.
+    /// </summary>
+    public Layer Layer(string name) =>
+        new(name, Reports.TryGetValue(name, out var details) ? details : Diagnostics.Layer.NoDetails);
 
     /// <summary>The declared event <paramref name="name"/> — a misspelled name fails here, at start.</summary>
     /// <exception cref="RegistryException">The registry does not declare it.</exception>
@@ -202,6 +238,34 @@ public sealed class Registry
     };
 
     internal static string Format(ulong n) => n.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// A report detail as it is written, if <paramref name="raw"/> — untrusted text from where the failure was caught — is
+    /// a value of <paramref name="kind"/>: a count, a duration in milliseconds, <c>true</c>/<c>false</c>, a declared choice,
+    /// or declared values joined with <c>,</c>. The text is <see cref="Written"/>'s, so a count lands on its bucket.
+    /// </summary>
+    internal static string? DetailText(FieldKind kind, string raw)
+    {
+        ulong? number = raw.Length is >= 1 and <= 20 && raw.All(char.IsAsciiDigit)
+            && ulong.TryParse(raw, NumberStyles.None, CultureInfo.InvariantCulture, out var n) ? n : null;
+        Value? value = kind switch
+        {
+            FieldKind.Count => number is { } c ? Value.Count(c) : null,
+            FieldKind.Duration => number is { } ms && ms <= MaxDurationMs ? Value.Duration(TimeSpan.FromMilliseconds(ms)) : null,
+            FieldKind.Bool => raw switch { "true" => Value.Bool(true), "false" => Value.Bool(false), _ => null },
+            FieldKind.Choice => Value.Choice(raw),
+            FieldKind.Subset => Value.Subset([.. raw.Split(',', StringSplitOptions.RemoveEmptyEntries)]),
+            _ => null,
+        };
+        return (value is null ? null : Written(kind, value)) switch
+        {
+            ulong w => Format(w),
+            bool b => b ? "true" : "false",
+            string s => s,
+            string[] set => string.Join(',', set),
+            _ => null,
+        };
+    }
 }
 
 /// <summary>A name a <see cref="Registry"/> declares, from <see cref="Registry.Event"/>.</summary>

@@ -10,7 +10,7 @@ public sealed partial class EventsTests : IDisposable
     public void Dispose() => Directory.Delete(_dir, recursive: true);
 
     /// <summary>The crate's test cases: the registry both languages read, and the lines both must write.</summary>
-    private static string Cases
+    internal static string Cases
     {
         get
         {

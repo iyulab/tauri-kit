@@ -1,0 +1,3 @@
+{"layer":"host","kind":"System.IO.IOException","frames":["Contoso.Export.Writer.Flush","Contoso.Export.Job.<Run>b__3_0","System.Threading.Tasks.Task.Execute"],"version":"1.2.3","os":"windows","arch":"x86_64","time":"2026-01-01T00:00:00Z","details":{"attempt":"2","status":"timeout"}}
+{"layer":"host","kind":"Unrecognized","frames":[],"version":"1.2.3","os":"windows","arch":"x86_64","time":"2026-01-01T00:00:00Z"}
+{"layer":"host","kind":"ReportsCapped","frames":[],"version":"1.2.3","os":"windows","arch":"x86_64","time":"2026-01-01T00:00:00Z"}

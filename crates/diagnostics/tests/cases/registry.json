@@ -15,5 +15,11 @@
       }
     },
     "app.opened": {}
+  },
+  "reports": {
+    "host": {
+      "status": { "kind": "choice", "values": ["timeout", "refused"] },
+      "attempt": { "kind": "count", "bucket": [0, 1, 2, 4] }
+    }
   }
 }

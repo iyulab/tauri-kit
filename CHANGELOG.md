@@ -57,7 +57,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - New NuGet package `TauriKit.Diagnostics`: declared events from a .NET backend — the same registry JSON, refused by
   the same rules, written to the crate's line shape (`Events.Record`), so the shell verifies and sends them with
   `pending_events`. The crate's `tests/cases` hold the shared registry and the lines both languages write for one
-  scene; a test on each side checks them.
+  scene; a test on each side checks them. Error reports too: `Registry.Layer` reads the registry's `reports` (the
+  details a layer's reports may carry, refused by the crate's rules), `Layer.Report` builds a report from a kind and a
+  stack — or from an exception: its type's full name and the method names of its stack, never its message or file
+  names — keeping only declared details of their kind, and `Reporter.Record` appends it in the crate's line shape,
+  each failure once and capped (`ReportsCapped`), so the shell reads and sends it with `pending`.
 
 ### Changed
 

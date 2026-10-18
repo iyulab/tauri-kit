@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tauri_kit_diagnostics::{
-    pending_events, Events, InstallId, Recorded, Registry, Session, Value, Why,
+    pending, pending_events, Events, FrameRule, InstallId, Recorded, Registry, Report, Reporter,
+    Session, Value, Why,
 };
 
 fn cases() -> PathBuf {
@@ -121,5 +122,67 @@ fn both_languages_write_the_same_lines_for_the_same_scene() {
 
     let rust = normalized(&std::fs::read_to_string(events.file()).unwrap());
     let dotnet = normalized(&std::fs::read_to_string(cases().join("dotnet-events.jsonl")).unwrap());
+    assert_eq!(rust, dotnet);
+}
+
+/// The .NET side's stack for the report scene (its `ReportsTests.Stack`): a frame with its source file, a lambda, a
+/// framework frame, a generic method.
+const DOTNET_STACK: &str = "   at Contoso.Export.Writer.Flush(Stream s) in C:\\Users\\builder\\src\\Writer.cs:line 42\n   at Contoso.Export.Job.<Run>b__3_0()\n   at System.Threading.Tasks.Task.Execute()\n   at Contoso.Export.Generic`1.Run[T](T item)\n";
+
+fn normalized_reports(text: &str) -> Vec<serde_json::Value> {
+    text.lines()
+        .map(|line| {
+            let mut v: serde_json::Value = serde_json::from_str(line).unwrap();
+            v["time"] = "2026-01-01T00:00:00Z".into();
+            v["os"] = "windows".into();
+            v["arch"] = "x86_64".into();
+            v
+        })
+        .collect()
+}
+
+#[test]
+fn every_report_the_dotnet_side_writes_reads_as_a_report_and_matches_the_same_scene_here() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = cases().join("dotnet-reports.jsonl");
+    let read = pending::<Report>(&file, &dir.path().join("sent")).unwrap();
+    let kinds: Vec<_> = read
+        .iter()
+        .flat_map(|p| p.items.iter().map(|r| r.kind.clone()))
+        .collect();
+    assert_eq!(
+        kinds,
+        ["System.IO.IOException", "Unrecognized", "ReportsCapped"],
+        "no line of the .NET file was passed over"
+    );
+
+    let host = registry().layer("host", FrameRule::dotnet_method());
+    let reporter = Reporter::new(dir.path().join("reports.jsonl")).max_reports(2);
+    let report = |kind: &str, stack: &str, details: &[(&str, &str)]| {
+        reporter
+            .record(host.report(kind, stack, "1.2.3", details))
+            .unwrap()
+    };
+    assert!(report(
+        "System.IO.IOException",
+        DOTNET_STACK,
+        &[
+            ("status", "timeout"),
+            ("attempt", "3"),
+            ("path", "C:/Users/someone/salaries.xlsx"),
+            ("status", "refused")
+        ]
+    ));
+    assert!(!report("System.IO.IOException", DOTNET_STACK, &[]));
+    assert!(report(
+        "C:/Users/someone/salaries.xlsx",
+        "",
+        &[("status", "C:/Users/someone/")]
+    ));
+    assert!(report("System.TimeoutException", "", &[]));
+    assert!(!report("System.InvalidOperationException", "", &[]));
+
+    let rust = normalized_reports(&std::fs::read_to_string(reporter.file()).unwrap());
+    let dotnet = normalized_reports(&std::fs::read_to_string(&file).unwrap());
     assert_eq!(rust, dotnet);
 }

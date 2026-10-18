@@ -2,7 +2,7 @@
 
 The .NET halves of tauri-kit, released under the same version as the crates: the loopback backend
 (below), the Windows credential store ([`TauriKit.Credentials`](#tauritkitcredentials)) and declared
-diagnostics events ([`TauriKit.Diagnostics`](#tauritkitdiagnostics)).
+diagnostics events and error reports ([`TauriKit.Diagnostics`](#tauritkitdiagnostics)).
 
 ## TauriKit.Sidecar.Loopback
 
@@ -174,6 +174,19 @@ var registry = Registry.FromJson(embeddedRegistryJson);
 var exported = registry.Event("export.finished");          // a misspelling fails here, at start
 var events = new Events(registry, appVersion, Path.Combine(logDir, "backend-events.jsonl"));
 events.Record(exported, ("format", Value.Choice("csv")), ("rows", Value.Count(rows)), ("took", Value.Duration(elapsed)));
+```
+
+Error reports take the same allowlist as the crate's: the layer's name, the kind when it is a plain identifier, the
+method names of the stack (`Namespace.Type.Method` — arguments and file names dropped; a .NET stack's file names are
+paths on the machine that built it), and only the details the registry declares for the layer under `reports`, each
+of its kind. The exception's message is never read. Each failure — the same layer, kind and first frame — is written
+once, at most 50, then one `ReportsCapped`; the shell sends the file with the crate's `pending`.
+
+```csharp
+var host = registry.Layer("host");
+var reports = new Reporter(Path.Combine(logDir, "backend-reports.jsonl"));
+try { … }
+catch (IOException e) { reports.Record(host.Report(e, appVersion, ("status", "timeout"))); }
 ```
 
 The crate's `tests/cases` hold the registry and the lines both languages must write for the same scene.
