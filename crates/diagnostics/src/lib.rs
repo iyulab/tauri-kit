@@ -65,6 +65,17 @@
 //! them, and [`Sink`] sends a sessions file as it sends a reports file ([`Telemetry`], [`pending`]).
 //! Whether an app may send them, and what it tells the person, is the app's to decide.
 //!
+//! # Events
+//!
+//! What the app wants to count — a feature used, a step that failed and which of a few ways — it
+//! declares in a [`Registry`] it compiles in: each event's name and a few fields, each of a closed kind
+//! ([`FieldKind`]: a choice among declared values, some of them, a count that is bucketed or capped,
+//! true or false, a duration). [`Events`] writes only what the registry declares, to its own JSON Lines
+//! file, each line with the session's random id — not the installation's — and drops what does not
+//! fit, saying so with [`DROPPED_EVENT`] (never with the undeclared name or value). What a sender reads
+//! back goes through [`Registry::verify`] ([`pending_events`]), so a line edited into the file is not
+//! sent; [`Sink::event_item`] makes the Application Insights item.
+//!
 //! # Features
 //!
 //! - `appinsights` (off by default): `Sink::send_pending`, which sends queued reports to Application Insights
@@ -76,6 +87,7 @@
 //!   graph (native TLS is OpenSSL on Linux, so `appinsights` puts `openssl-sys` in the lock file).
 //!   With both on, `appinsights` decides.
 
+mod event;
 mod queue;
 mod report;
 mod session;
@@ -84,6 +96,11 @@ mod sink;
 #[cfg(any(feature = "appinsights", feature = "appinsights-rustls"))]
 mod appinsights;
 
+pub use event::{
+    pending_events, Event, EventLine, EventName, Events, FieldKind, Recorded, Registry,
+    RegistryError, Value, Why, DROPPED_EVENT, MAX_COUNT, MAX_DURATION, MAX_FIELDS, MAX_PER_EVENT,
+    MAX_VALUES,
+};
 pub use queue::{
     mark_sent, pending, trim, unsent, Batch, Pending, Reporter, CAPPED_KIND, MAX_FILE_BYTES,
     MAX_REPORTS,

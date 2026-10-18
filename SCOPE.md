@@ -26,8 +26,9 @@ the failures are quiet, platform-specific, and found late:
   the installed app's entries
 - **Per-folder state** — what the app keeps for each folder a person opens, outside that folder:
   a stable name for it, a format that older releases leave alone, writes kept until they land
-- **Error reports** — what failed and where in the app's own code, never what it was about, kept
-  where the person can read it before anything is sent
+- **Diagnostics** — what failed and where in the app's own code, when the app started and ended, and
+  the events the app declares in closed kinds (a choice among declared values, a bucketed count, a
+  duration) — never what any of it was about, kept where the person can read it before anything is sent
 - **The web view under the window** — saying so when the runtime is missing, keeping form entries out
   of its profile, keeping a window that shows untrusted content on its own origins
 - **The person's languages** — which UI languages they prefer, in their order, before any window

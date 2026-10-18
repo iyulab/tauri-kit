@@ -454,6 +454,17 @@ impl Session {
         &self.head.session
     }
 
+    /// The session id, version and platform an event of this session carries — never the installation.
+    pub(crate) fn event_head(&self) -> (String, String, String, String) {
+        let h = &self.head;
+        (
+            h.session.clone(),
+            h.version.clone(),
+            h.os.clone(),
+            h.arch.clone(),
+        )
+    }
+
     /// Says which screen is open now — one of the app's [`Screens`], or `None` when none is (the
     /// window hidden or minimised). Time on the screen open before ends here. Nothing is written
     /// until the session ends.
@@ -664,14 +675,14 @@ impl SessionBuilder {
 }
 
 /// 16 bytes from the operating system's random generator, as 32 lowercase hexadecimal digits.
-fn random_id() -> io::Result<String> {
+pub(crate) fn random_id() -> io::Result<String> {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).map_err(|e| io::Error::other(e.to_string()))?;
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// 32 lowercase hexadecimal digits.
-fn is_id(raw: &str) -> bool {
+pub(crate) fn is_id(raw: &str) -> bool {
     raw.len() == 32 && raw.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
@@ -681,7 +692,7 @@ fn is_plain(raw: &str) -> bool {
 }
 
 /// A version: ASCII letters, digits, `.`, `-`, `+` and `_`, 1 to 64 of them.
-fn is_version(raw: &str) -> bool {
+pub(crate) fn is_version(raw: &str) -> bool {
     (1..=64).contains(&raw.len())
         && raw
             .chars()
@@ -689,7 +700,7 @@ fn is_version(raw: &str) -> bool {
 }
 
 /// An operating system or architecture name: ASCII letters, digits and `_`, 1 to 32 of them.
-fn is_platform(raw: &str) -> bool {
+pub(crate) fn is_platform(raw: &str) -> bool {
     (1..=32).contains(&raw.len()) && raw.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
@@ -708,7 +719,7 @@ fn is_locale(raw: &str) -> bool {
 }
 
 /// A time as [`utc`] writes it: `YYYY-MM-DDTHH:MM:SSZ`.
-fn is_time(raw: &str) -> bool {
+pub(crate) fn is_time(raw: &str) -> bool {
     let b = raw.as_bytes();
     b.len() == 20
         && b.iter().enumerate().all(|(i, &c)| match i {

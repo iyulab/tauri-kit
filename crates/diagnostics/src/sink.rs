@@ -3,7 +3,7 @@
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use crate::{Report, SessionEvent, SessionKind};
+use crate::{Event, Report, SessionEvent, SessionKind};
 
 /// A line of a file a [`Sink`] sends: a [`Report`] or a [`SessionEvent`].
 pub trait Telemetry: Serialize + DeserializeOwned {
@@ -124,6 +124,47 @@ impl Sink {
                     "properties": report.details,
                 },
             },
+        })
+    }
+
+    /// A declared event ([`Event`]) as Application Insights takes it: one event item named as the event,
+    /// its choices, sets (joined with `,`) and true/false as properties, its counts and durations
+    /// (milliseconds) as measurements, tagged with the session, the app's version and the platform —
+    /// not with the installation.
+    pub fn event_item(&self, event: &Event) -> serde_json::Value {
+        let (os, arch) = event.platform();
+        let (mut properties, mut measurements) = (serde_json::Map::new(), serde_json::Map::new());
+        for (field, value) in event.fields() {
+            match value {
+                serde_json::Value::Number(_) => {
+                    measurements.insert(field.clone(), value.clone());
+                }
+                serde_json::Value::Bool(b) => {
+                    properties.insert(field.clone(), b.to_string().into());
+                }
+                serde_json::Value::Array(items) => {
+                    let joined: Vec<_> = items.iter().filter_map(|i| i.as_str()).collect();
+                    properties.insert(field.clone(), joined.join(",").into());
+                }
+                other => {
+                    properties.insert(field.clone(), other.clone());
+                }
+            }
+        }
+        serde_json::json!({
+            "name": "Microsoft.ApplicationInsights.Event",
+            "time": event.time(),
+            "iKey": self.instrumentation_key,
+            "tags": {
+                // No location from the connection's address: an event says what it declares, nothing more.
+                "ai.location.ip": "0.0.0.0",
+                "ai.session.id": event.session(),
+                "ai.application.ver": event.version(),
+                "ai.device.osVersion": format!("{os} {arch}"),
+            },
+            "data": { "baseType": "EventData", "baseData": {
+                "ver": 2, "name": event.name(), "properties": properties, "measurements": measurements,
+            } },
         })
     }
 
@@ -401,6 +442,38 @@ mod tests {
             serde_json::json!({ "started": "2026-10-07T23:00:00Z" })
         );
         assert!(items[0]["tags"].get("ai.device.locale").is_none());
+    }
+
+    #[test]
+    fn a_declared_event_goes_out_as_one_event_item_without_the_installation() {
+        let registry = crate::Registry::from_json(
+            r#"{"events":{"export.finished":{"fields":{
+                "format":{"kind":"choice","values":["csv"]},"rows":{"kind":"count","max":10},
+                "filters":{"kind":"set","values":["a","b"]},"empty":{"kind":"bool"}}}}}"#,
+        )
+        .unwrap();
+        let line: crate::EventLine = serde_json::from_value(serde_json::json!({
+            "name": "export.finished", "session": "fedcba9876543210fedcba9876543210", "version": "1.2.3",
+            "os": "windows", "arch": "x86_64", "time": "2026-10-18T09:00:00Z",
+            "fields": { "format": "csv", "rows": 7, "filters": ["a", "b"], "empty": false },
+        }))
+        .unwrap();
+        let item = sink().event_item(&registry.verify(line).unwrap());
+        assert_eq!(item["data"]["baseData"]["name"], "export.finished");
+        assert_eq!(
+            item["data"]["baseData"]["properties"],
+            serde_json::json!({ "format": "csv", "filters": "a,b", "empty": "false" })
+        );
+        assert_eq!(
+            item["data"]["baseData"]["measurements"],
+            serde_json::json!({ "rows": 7 })
+        );
+        assert_eq!(
+            item["tags"]["ai.session.id"],
+            "fedcba9876543210fedcba9876543210"
+        );
+        assert!(item["tags"].get("ai.user.id").is_none());
+        assert_eq!(item["tags"]["ai.location.ip"], "0.0.0.0");
     }
 
     #[test]

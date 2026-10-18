@@ -4,7 +4,7 @@
 use std::io;
 use std::path::Path;
 
-use crate::{mark_sent, pending, Report, Sink, Telemetry};
+use crate::{mark_sent, pending, pending_events, Pending, Registry, Report, Sink, Telemetry};
 
 impl Sink {
     /// An agent for the ingestion endpoint: the OS's certificate store and the proxy the PC is set
@@ -56,14 +56,40 @@ impl Sink {
         file: &Path,
         sent: &Path,
     ) -> io::Result<usize> {
+        self.send_stretches(agent, pending::<T>(file, sent)?, sent, |line| {
+            line.items(self)
+        })
+    }
+
+    /// Sends the declared events an events file has gained since the last send — each line verified
+    /// by `registry` first ([`pending_events`]), so a line edited into the file is never sent — as
+    /// [`Sink::event_item`]s, the way [`Sink::send_pending_of`] sends.
+    pub fn send_pending_events(
+        &self,
+        agent: &ureq::Agent,
+        registry: &Registry,
+        file: &Path,
+        sent: &Path,
+    ) -> io::Result<usize> {
+        self.send_stretches(
+            agent,
+            pending_events(registry, file, sent)?,
+            sent,
+            |event| vec![self.event_item(event)],
+        )
+    }
+
+    fn send_stretches<T>(
+        &self,
+        agent: &ureq::Agent,
+        stretches: Vec<Pending<T>>,
+        sent: &Path,
+        items_of: impl Fn(&T) -> Vec<serde_json::Value>,
+    ) -> io::Result<usize> {
         let mut count = 0;
-        for stretch in pending::<T>(file, sent)? {
+        for stretch in stretches {
             if !stretch.items.is_empty() {
-                let items: Vec<_> = stretch
-                    .items
-                    .iter()
-                    .flat_map(|line| line.items(self))
-                    .collect();
+                let items: Vec<_> = stretch.items.iter().flat_map(&items_of).collect();
                 let body = serde_json::to_vec(&items).map_err(io::Error::other)?;
                 let status = agent
                     .post(&self.track_url)
