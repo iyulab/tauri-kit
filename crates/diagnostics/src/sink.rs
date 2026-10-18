@@ -175,11 +175,20 @@ impl Sink {
                 serde_json::json!({ "locale": event.locale(), "track": event.track() }),
                 serde_json::json!({}),
             )],
-            SessionKind::Unfinished => vec![custom(
-                "SessionUnfinished",
-                serde_json::json!({ "started": event.started() }),
-                serde_json::json!({}),
-            )],
+            SessionKind::Unfinished => {
+                let mut properties = serde_json::json!({ "started": event.started() });
+                if let Some(how) = event.how() {
+                    properties["how"] = serde_json::to_value(how).unwrap_or_default();
+                }
+                if event.version_changed() {
+                    properties["versionChanged"] = "true".into();
+                }
+                vec![custom(
+                    "SessionUnfinished",
+                    properties,
+                    serde_json::json!({}),
+                )]
+            }
             SessionKind::End => std::iter::once(custom(
                 "SessionEnd",
                 serde_json::json!({}),
@@ -392,6 +401,18 @@ mod tests {
             serde_json::json!({ "started": "2026-10-07T23:00:00Z" })
         );
         assert!(items[0]["tags"].get("ai.device.locale").is_none());
+    }
+
+    #[test]
+    fn how_an_unfinished_session_ended_goes_out_with_it() {
+        let unfinished = session_event(serde_json::json!({
+            "event": "unfinished", "started": "2026-10-07T23:00:00Z", "how": "os_session_end", "version_changed": true,
+        }));
+        let items = sink().session_items(&unfinished);
+        assert_eq!(
+            items[0]["data"]["baseData"]["properties"],
+            serde_json::json!({ "started": "2026-10-07T23:00:00Z", "how": "os_session_end", "versionChanged": "true" })
+        );
     }
 
     #[test]

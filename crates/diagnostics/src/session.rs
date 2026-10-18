@@ -104,8 +104,25 @@ pub enum SessionKind {
     /// The app ended as it should: its time and its time on each screen.
     End,
     /// A session that started did not end as it should — the app crashed, was ended by the system
-    /// or lost power. Recorded when the next session starts.
+    /// or lost power. Recorded when the next session starts, with [`Ended`] saying what is known of
+    /// how.
     Unfinished,
+}
+
+/// What is known of how a session that did not end as it should ended — read from what the session
+/// itself could still say before it went ([`Session::os_ending`], [`Session::updating`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Ended {
+    /// Nothing was said: a crash, the app being ended from outside, lost power. These cannot be told
+    /// apart without a crash dump.
+    Unfinished,
+    /// The operating system was ending the person's session (shutdown, restart, sign-out) while the
+    /// app ran — not a crash.
+    OsSessionEnd,
+    /// The app was handing over to an installer — an update in progress.
+    Updated,
 }
 
 /// One line of a session file, exactly as it is written and sent.
@@ -128,6 +145,8 @@ pub struct SessionEvent {
     started: Option<String>,
     seconds: Option<u64>,
     screens: BTreeMap<String, ScreenTime>,
+    how: Option<Ended>,
+    version_changed: bool,
 }
 
 impl SessionEvent {
@@ -181,7 +200,19 @@ impl SessionEvent {
         self.seconds
     }
 
-    /// Time on each screen, on an end.
+    /// For an unfinished session: what is known of how it ended. `None` on other kinds, and on a
+    /// line written before this was recorded.
+    pub fn how(&self) -> Option<Ended> {
+        self.how
+    }
+
+    /// For an unfinished session: whether the session after it runs another version of the app —
+    /// the app was replaced after it stopped (a crash, then the person installed again, say).
+    pub fn version_changed(&self) -> bool {
+        self.version_changed
+    }
+
+    /// The time on each screen, for an end.
     pub fn screens(&self) -> &BTreeMap<String, ScreenTime> {
         &self.screens
     }
@@ -229,6 +260,10 @@ struct Line {
     seconds: Option<u64>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     screens: BTreeMap<String, ScreenTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    how: Option<Ended>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    version_changed: bool,
 }
 
 impl From<SessionEvent> for Line {
@@ -246,6 +281,8 @@ impl From<SessionEvent> for Line {
             started: e.started,
             seconds: e.seconds,
             screens: e.screens,
+            how: e.how,
+            version_changed: e.version_changed,
         }
     }
 }
@@ -269,6 +306,8 @@ impl TryFrom<Line> for SessionEvent {
             started: l.started,
             seconds: l.seconds,
             screens: l.screens,
+            how: l.how,
+            version_changed: l.version_changed,
         };
         if event.is_valid() {
             Ok(event)
@@ -288,6 +327,8 @@ impl SessionEvent {
                     && self.started.is_none()
                     && self.seconds.is_none()
                     && self.screens.is_empty()
+                    && self.how.is_none()
+                    && !self.version_changed
             }
             SessionKind::End => {
                 self.locale.is_none()
@@ -296,6 +337,8 @@ impl SessionEvent {
                     && self.seconds.is_some()
                     && self.screens.len() <= MAX_SCREENS
                     && self.screens.keys().all(|name| is_plain(name))
+                    && self.how.is_none()
+                    && !self.version_changed
             }
             SessionKind::Unfinished => {
                 self.locale.is_none()
@@ -317,6 +360,8 @@ struct Running {
     #[serde(flatten)]
     head: Head,
     started: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ending: Option<Ended>,
 }
 
 /// The session of one launch: written to a JSON Lines file the person can read — exactly what
@@ -353,6 +398,8 @@ pub struct Session {
     file: PathBuf,
     marker: PathBuf,
     head: Head,
+    /// When it started, as the marker says.
+    started_at: String,
     screens: Screens,
     started: Instant,
     clock: Mutex<Clock>,
@@ -437,8 +484,43 @@ impl Session {
         }
     }
 
+    /// Says that the operating system is ending the person's session (shutdown, restart, sign-out)
+    /// while the app runs. If the app then goes without [`Session::end`], the next session records
+    /// it as [`Ended::OsSessionEnd`] — not a crash. Call it from the platform's notice that the session
+    /// is ending (on Windows, `WM_QUERYENDSESSION` or `WM_ENDSESSION`), before anything that may not
+    /// finish.
+    pub fn os_ending(&self) -> io::Result<()> {
+        self.say(Ended::OsSessionEnd)
+    }
+
+    /// Says that the app is handing over to an installer — an update. If the app then goes without
+    /// [`Session::end`] (the installer ends it), the next session records it as [`Ended::Updated`].
+    /// A different version alone is not taken as an update: a crash followed by the person
+    /// installing again is still a crash ([`SessionEvent::version_changed`]).
+    pub fn updating(&self) -> io::Result<()> {
+        self.say(Ended::Updated)
+    }
+
+    /// Writes into the marker how the session is about to go, unless it has already ended.
+    fn say(&self, ending: Ended) -> io::Result<()> {
+        if self.clock.lock().unwrap_or_else(|e| e.into_inner()).ended {
+            return Ok(());
+        }
+        let running = Running {
+            head: self.head.clone(),
+            started: self.started_at.clone(),
+            ending: Some(ending),
+        };
+        tauri_kit_fs::write_atomic(
+            &self.marker,
+            &serde_json::to_vec(&running).map_err(io::Error::other)?,
+        )
+    }
+
     /// Ends the session as it should: writes how long it lasted and the time on each screen, and
-    /// removes the marker. A session ends once; ending it again does nothing.
+    /// removes the marker. A session ends once; ending it again does nothing. Call it on every quit
+    /// the app controls, before any step that waits — a quit that waits on something first and is
+    /// cut short leaves the marker, and the session is recorded as unfinished.
     pub fn end(&self) -> io::Result<()> {
         self.end_at(Instant::now())
     }
@@ -476,6 +558,8 @@ impl Session {
             started: None,
             seconds: Some(now.saturating_duration_since(self.started).as_secs()),
             screens,
+            how: None,
+            version_changed: false,
         };
         append_line(&self.file, &end)?;
         match std::fs::remove_file(&self.marker) {
@@ -525,6 +609,7 @@ impl SessionBuilder {
             .and_then(|bytes| serde_json::from_slice::<Running>(&bytes).ok())
             .filter(|r| r.head.is_valid() && is_time(&r.started))
         {
+            let version_changed = before.head.version != self.head.version;
             let unfinished = SessionEvent {
                 kind: SessionKind::Unfinished,
                 head: before.head,
@@ -534,6 +619,8 @@ impl SessionBuilder {
                 started: Some(before.started),
                 seconds: None,
                 screens: BTreeMap::new(),
+                how: Some(before.ending.unwrap_or(Ended::Unfinished)),
+                version_changed,
             };
             append_line(&file, &unfinished)?;
         }
@@ -548,11 +635,14 @@ impl SessionBuilder {
             started: None,
             seconds: None,
             screens: BTreeMap::new(),
+            how: None,
+            version_changed: false,
         };
         append_line(&file, &start)?;
         let running = Running {
             head: head.clone(),
-            started: now,
+            started: now.clone(),
+            ending: None,
         };
         if let Some(dir) = marker.parent() {
             std::fs::create_dir_all(dir)?;
@@ -565,6 +655,7 @@ impl SessionBuilder {
             file,
             marker,
             head,
+            started_at: now,
             screens: self.screens,
             started: Instant::now(),
             clock: Mutex::default(),
@@ -747,6 +838,90 @@ mod tests {
         assert_eq!(written[2]["event"], "start");
         assert_eq!(written[2]["session"], next.id());
         assert_ne!(next.id(), crashed_id);
+    }
+
+    #[test]
+    fn an_unfinished_session_says_how_it_ended_when_it_could_say() {
+        let dir = tempfile::tempdir().unwrap();
+        let (file, marker, id) = paths(&dir);
+        let install = InstallId::load_or_create(&id).unwrap();
+        let start = || {
+            Session::builder(&install, "1.2.3")
+                .start(&file, &marker)
+                .unwrap()
+        };
+
+        drop(start()); // said nothing: a crash
+        let ending = start();
+        ending.os_ending().unwrap();
+        drop(ending); // the system ended the person's session
+        let updating = start();
+        updating.updating().unwrap();
+        drop(updating); // the installer ended it
+        let clean = start();
+        clean.os_ending().unwrap();
+        clean.end().unwrap(); // said it would go, then ended as it should
+        clean.updating().unwrap(); // after the end: nothing more is written
+        start();
+
+        let how: Vec<_> = lines(&file)
+            .iter()
+            .filter(|l| l["event"] == "unfinished")
+            .map(|l| l["how"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(how, ["unfinished", "os_session_end", "updated"]);
+        assert!(lines(&file)
+            .iter()
+            .all(|l| l.get("version_changed").is_none()));
+    }
+
+    #[test]
+    fn another_version_after_a_crash_is_still_a_crash_and_says_the_version_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (file, marker, id) = paths(&dir);
+        let install = InstallId::load_or_create(&id).unwrap();
+        drop(
+            Session::builder(&install, "1.2.3")
+                .start(&file, &marker)
+                .unwrap(),
+        );
+        Session::builder(&install, "1.2.4")
+            .start(&file, &marker)
+            .unwrap();
+
+        let unfinished = &lines(&file)[1];
+        assert_eq!(unfinished["how"], "unfinished");
+        assert_eq!(unfinished["version_changed"], true);
+        assert_eq!(unfinished["version"], "1.2.3");
+    }
+
+    #[test]
+    fn how_and_version_changed_belong_to_an_unfinished_session_only() {
+        let base = |extra: serde_json::Value| {
+            let mut line = serde_json::json!({
+                "install": "0123456789abcdef0123456789abcdef", "session": "fedcba9876543210fedcba9876543210",
+                "version": "1.2.3", "os": "windows", "arch": "x86_64", "time": "2026-10-08T09:00:00Z",
+            });
+            line.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            serde_json::from_value::<SessionEvent>(line)
+        };
+        let started = "2026-10-08T08:00:00Z";
+        assert!(
+            base(serde_json::json!({"event": "unfinished", "started": started})).is_ok(),
+            "a line from before"
+        );
+        assert!(base(
+            serde_json::json!({"event": "unfinished", "started": started, "how": "updated"})
+        )
+        .is_ok());
+        assert!(base(
+            serde_json::json!({"event": "unfinished", "started": started, "how": "a crash at C:/x"})
+        )
+        .is_err());
+        assert!(base(serde_json::json!({"event": "end", "seconds": 5, "how": "updated"})).is_err());
+        assert!(base(serde_json::json!({"event": "start", "locale": "en", "track": "default", "version_changed": true})).is_err());
     }
 
     #[test]

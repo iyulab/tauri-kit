@@ -92,7 +92,8 @@ pub use report::{
     FrameRule, Layer, Report, RustSource, WebBundle, MAX_DETAILS, MAX_FRAMES, UNRECOGNIZED_KIND,
 };
 pub use session::{
-    InstallId, ScreenTime, Screens, Session, SessionBuilder, SessionEvent, SessionKind, MAX_SCREENS,
+    Ended, InstallId, ScreenTime, Screens, Session, SessionBuilder, SessionEvent, SessionKind,
+    MAX_SCREENS,
 };
 pub use sink::{Sink, Telemetry};
 

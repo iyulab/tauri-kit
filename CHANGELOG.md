@@ -34,6 +34,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   Credential Manager entries (`<account>.<service>`, user name = account, UTF-16 secret) and the same build
   separation (`.test`, `.dev`), checked by writing from one language and reading from the other.
   `BuildKinds.Of(assembly)` tells a Debug build of the app.
+- `tauri-kit-diagnostics`: an unfinished session says what is known of how it ended — `Ended::{Unfinished,
+  OsSessionEnd, Updated}` in a new `how` field, from `Session::os_ending()` (call it from the platform's
+  notice that the person's session is ending) and `Session::updating()` (before handing over to an
+  installer), which the session writes into its marker. A different version alone is not taken for an
+  update: `version_changed` says it beside `unfinished`, so a crash followed by reinstalling stays a crash.
+  Lines queued before this read as before (no `how`). Application Insights gets `how` and `versionChanged`
+  as properties of `SessionUnfinished`.
 
 ## [0.21.0] - 2026-10-17
 
