@@ -522,7 +522,7 @@ mod tests {
             VERSION,
             &[
                 ("status", "503"),
-                ("phase", r"C:\Users\someone\notes.md"),
+                ("phase", "C:\\Users\\someone\\notes.md"),
                 ("retried", "true"),
                 ("note", "the person's words"),
                 ("code", "engine-start"),
