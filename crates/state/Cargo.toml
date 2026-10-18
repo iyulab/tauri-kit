@@ -1,7 +1,7 @@
 [package]
 name = "tauri-kit-state"
 version.workspace = true
-description = "Per-folder app state kept outside the folder: a stable key, a format version that older releases leave alone, and writes kept until they land."
+description = "Per-folder and per-device app state: a stable folder key, a format version older releases leave alone, writes kept until they land, settings that keep fields they do not know, one install id, and a move when the app identifier changes."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -10,7 +10,12 @@ keywords = ["tauri", "state", "settings", "migration", "desktop"]
 categories = ["filesystem"]
 
 [dependencies]
+# The installation identifier: the OS random generator, never anything of the device.
+getrandom = "0.4"
+serde = "1"
+serde_json = "1"
 tauri-kit-fs = { path = "../fs", version = "0.22.0" }
 
 [dev-dependencies]
+serde = { version = "1", features = ["derive"] }
 tempfile = "3"

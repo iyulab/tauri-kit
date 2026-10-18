@@ -16,6 +16,15 @@
 //! - **Writes kept until they land** — an [`Outbox`] holds writes the app could not make yet as
 //!   files, so they survive the app closing, and are tried again the next time.
 //!
+//! And for the device, beside them:
+//!
+//! - **Settings that keep what they do not know** — [`Settings`] reads and writes one JSON object
+//!   crash-safely, and writes back the fields a newer release added instead of dropping them.
+//! - **One identifier of the installation** — [`InstallId`], random and kept in a file; the
+//!   diagnostics crate takes this same type, so there is one id, not one per crate.
+//! - **A move when the app's identifier changes** — [`relocate`] carries the data directory from
+//!   where the old identifier kept it, once, without overwriting anything at the new place.
+//!
 //! Where the state directories live is the app's choice; this crate names the one inside it:
 //!
 //! ```no_run
@@ -27,10 +36,14 @@
 //! let state = app_data_dir().join("folders").join(folder_key(folder));
 //! ```
 
+mod device;
 mod format;
 mod key;
 mod outbox;
+mod settings;
 
+pub use device::{relocate, InstallId, Relocated, INSTALL_ID_FILE};
 pub use format::{set_aside, Format, Step, Versioned, FORMAT_FILE};
 pub use key::folder_key;
 pub use outbox::Outbox;
+pub use settings::Settings;

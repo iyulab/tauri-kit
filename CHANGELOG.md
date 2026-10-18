@@ -7,6 +7,21 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- `tauri-kit-state`: state for the device, beside the per-folder state. `Settings<T>` reads and writes an
+  app's settings as one JSON object, crash-safely, and writes back the fields a newer release added instead
+  of dropping them (a field `T` knows stays `T`'s); a file that cannot be read is moved aside, not lost.
+  `InstallId` (moved here, with `InstallId::in_dir` and `INSTALL_ID_FILE`) is the one identifier of the
+  installation. `relocate(old, new)` carries the data directory from where an earlier app identifier kept
+  it: a rename, or a copy and then removal when the rename is refused, never over anything already at the
+  new place, and safe to run again.
+
+### Changed
+
+- `tauri-kit-diagnostics`: `InstallId` is `tauri_kit_state::InstallId`, re-exported — same name and
+  methods, one type, so an app's own records and its reports name the installation with the same value.
+
 ## [0.22.0] - 2026-10-18
 
 ### Added

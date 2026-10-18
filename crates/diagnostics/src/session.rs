@@ -18,38 +18,8 @@ use crate::UNRECOGNIZED_KIND;
 /// The most screens one session event carries; time on screens past it is left out.
 pub const MAX_SCREENS: usize = 64;
 
-/// A random identifier of this installation of the app: made on the device the first time it is
-/// needed, from the operating system's random generator, and kept in a file.
-///
-/// It is never derived from the hardware, the account or anything else on the device, so it names
-/// an installation and nothing more: deleting the file makes a new one. It is 32 lowercase
-/// hexadecimal digits.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InstallId(String);
-
-impl InstallId {
-    /// The identifier kept in `file`, or a new one written there (crash-safely, with its folders)
-    /// when `file` is missing or holds anything other than an identifier.
-    pub fn load_or_create(file: &Path) -> io::Result<Self> {
-        match std::fs::read_to_string(file) {
-            Ok(text) if is_id(text.trim()) => return Ok(InstallId(text.trim().to_string())),
-            Ok(_) => {}
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e),
-        }
-        let id = random_id()?;
-        if let Some(dir) = file.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        tauri_kit_fs::write_atomic(file, id.as_bytes())?;
-        Ok(InstallId(id))
-    }
-
-    /// The identifier, as written.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
+/// The installation's identifier: the same type the state crate keeps, so an app has one.
+pub use tauri_kit_state::InstallId;
 
 /// The screens of an app, by fixed names of its own.
 ///
@@ -437,7 +407,7 @@ impl Session {
     pub fn builder(install: &InstallId, version: &str) -> SessionBuilder {
         SessionBuilder {
             head: Head {
-                install: install.0.clone(),
+                install: install.as_str().to_owned(),
                 session: String::new(),
                 version: if is_version(version) {
                     version.to_string()

@@ -1435,6 +1435,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tauri-kit-fs",
+ "tauri-kit-state",
  "tempfile",
  "ureq",
 ]
@@ -1472,6 +1473,9 @@ dependencies = [
 name = "tauri-kit-state"
 version = "0.22.0"
 dependencies = [
+ "getrandom 0.4.3",
+ "serde",
+ "serde_json",
  "tauri-kit-fs",
  "tempfile",
 ]
