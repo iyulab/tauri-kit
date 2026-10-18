@@ -1,0 +1,13 @@
+[package]
+name = "tauri-kit-locale"
+version.workspace = true
+description = "The UI languages the person prefers, read from the operating system before any window exists, and the best match among the languages an app ships."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+keywords = ["tauri", "locale", "language", "i18n", "desktop"]
+categories = ["internationalization", "localization", "os"]
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Globalization"] }

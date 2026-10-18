@@ -26,6 +26,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   times (its likeliest holder is the backend's own previous run, still stopping); only when it stays
   taken does the backend move, and `RememberedStart.RunAnnouncingAsync` adds `previousPort=<port>` to the
   readiness line. `tauri-kit-sidecar`: `PREVIOUS_PORT_FIELD` and `ready_previous_port` read it.
+- New crate `tauri-kit-locale`: `preferred_languages` — the UI languages the person prefers, most preferred
+  first, as BCP 47 tags, read before any window exists (Windows `GetUserPreferredUILanguages`, macOS
+  `CFLocaleCopyPreferredLanguages`, `LANGUAGE`/`LC_ALL`/`LC_MESSAGES`/`LANG` elsewhere); `pick` — the best of
+  the languages an app ships (RFC 4647 lookup, then the same language in another region).
 
 ## [0.21.0] - 2026-10-17
 

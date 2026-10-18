@@ -30,6 +30,8 @@ the failures are quiet, platform-specific, and found late:
   where the person can read it before anything is sent
 - **The web view under the window** — saying so when the runtime is missing, keeping form entries out
   of its profile, keeping a window that shows untrusted content on its own origins
+- **The person's languages** — which UI languages they prefer, in their order, before any window
+  exists (the words themselves stay the app's)
 
 One capability per crate, so an app takes only what it needs. All crates share one version.
 
