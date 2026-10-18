@@ -7,6 +7,20 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- `tauri-kit-webview`: keep a window that shows untrusted content on its own origins. `NavigationLock`
+  names the origins (exact scheme, host and port — or one `file:` document) and the other schemes a
+  window may go to; `decide` answers for one URL on every platform. On Windows, `lock_navigation`
+  holds a web view to it: navigations and redirects are cancelled, frames too, the document request
+  of a refused navigation gets an empty 403 before it leaves (cancelling alone can let the request
+  through), new windows are never created and are reported with whether the person started them,
+  external schemes are refused, and a window that ends up on a refused document anyway stops loading
+  and says so. It returns what the runtime let it hold (`Enforced`). `web_address` checks a URL from a
+  page before it is handed to the system browser. URLs are read strictly — user info, backslashes,
+  non-ASCII hosts and dot segments are refused, not guessed at. The lock does not stop data leaving
+  by other means (images, `fetch`, WebSocket); pair it with a Content-Security-Policy.
+
 ## [0.21.0] - 2026-10-17
 
 ### Added

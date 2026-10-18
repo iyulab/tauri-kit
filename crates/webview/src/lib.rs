@@ -32,8 +32,23 @@
 //!   passes defaults. [`forwarded_browser_arguments`] gives the window those arguments itself, in a
 //!   debug build only.
 //!
+//! A fourth is for windows that show content the app does not trust:
+//!
+//! - **Keep the window on its own origins.** [`NavigationLock`] names the origins a window may show,
+//!   and `lock_navigation` holds a WebView2 window to it — navigations, frames, redirects, new
+//!   windows and external schemes, with the document request stopped before it leaves. See the
+//!   [`lock`] module for what it does not cover.
+//!
 //! On macOS and Linux the system web view is part of the operating system: [`runtime`] answers
 //! [`Runtime::System`] and there is no profile to clear.
+
+pub mod lock;
+
+#[cfg(windows)]
+pub use lock::lock_navigation;
+pub use lock::{
+    web_address, Attempt, Decision, Enforced, Kind, NavigationLock, Origin, OriginError, Reason,
+};
 
 use std::io;
 use std::path::{Path, PathBuf};

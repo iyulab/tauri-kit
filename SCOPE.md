@@ -28,6 +28,8 @@ the failures are quiet, platform-specific, and found late:
   a stable name for it, a format that older releases leave alone, writes kept until they land
 - **Error reports** — what failed and where in the app's own code, never what it was about, kept
   where the person can read it before anything is sent
+- **The web view under the window** — saying so when the runtime is missing, keeping form entries out
+  of its profile, keeping a window that shows untrusted content on its own origins
 
 One capability per crate, so an app takes only what it needs. All crates share one version.
 

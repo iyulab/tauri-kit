@@ -1,12 +1,12 @@
 [package]
 name = "tauri-kit-webview"
 version.workspace = true
-description = "The web view runtime under a desktop app's window: say in the person's language when WebView2 is missing, and keep form entries out of the web view's profile."
+description = "The web view runtime under a desktop app's window: say in the person's language when WebView2 is missing, keep form entries out of the web view's profile, and keep a window that shows untrusted content on its own origins."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-keywords = ["tauri", "webview2", "autofill", "desktop"]
+keywords = ["tauri", "webview2", "autofill", "navigation", "desktop"]
 categories = ["gui", "os"]
 
 # The web view types an app holds come from the same `webview2-com` its Tauri version uses; the
@@ -14,6 +14,8 @@ categories = ["gui", "os"]
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.39"
 windows-core = "0.62"
+# Already under webview2-com at this version; named here for the stream type a web resource response takes.
+windows = { version = "0.62", features = ["Win32_System_Com"] }
 windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
