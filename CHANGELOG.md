@@ -65,6 +65,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ### Changed
 
+- `tauri-kit-diagnostics` (**breaking**): `SessionBuilder::start(file, running)` takes a folder of running
+  sessions instead of one marker file. Each session keeps its own marker there beside a lock it holds while it
+  runs, and a starting session records as unfinished only those whose lock nobody holds — their process is
+  gone. Two instances of the app running at once no longer take each other for unfinished, and the first to end
+  no longer removes the other's marker (which hid the other's crash). A marker file at that path, as earlier
+  versions kept, is read once as a session that may not have ended and replaced by the folder — pass the same
+  path.
 - `tauri-kit-diagnostics` (**breaking**, a privacy fix): a report's details are only those the app's registry
   declares for the layer, each of its kind. `Report::detail` is gone — it took any plain identifier or a
   number of up to 18 digits under any name, which could carry an identifier from the data. A layer now comes

@@ -322,7 +322,7 @@ mod tests {
         let install = InstallId::load_or_create(&dir.path().join("install-id")).unwrap();
         let session = Session::builder(&install, "1.2.3")
             .screens(Screens::new(["home", "report"]))
-            .start(&file, dir.path().join("session.running"))
+            .start(&file, dir.path().join("running"))
             .unwrap();
         session.screen(Some("home"));
         session.screen(Some("report"));

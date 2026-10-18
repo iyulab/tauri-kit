@@ -2,6 +2,7 @@
 //! what a screen showed, what was typed into it, or who the person is.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{File, OpenOptions, TryLockError};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -368,9 +369,12 @@ struct Running {
 /// would be sent — as it starts and ends.
 ///
 /// Start one with [`Session::builder`] when the app starts, tell it which screen is open with
-/// [`Session::screen`], and [`Session::end`] it when the app ends as it should. While it runs, a
-/// marker file says so; a session that finds the marker of one before it records that one as
-/// [`SessionKind::Unfinished`] first. Make one per launch, in one process of the app.
+/// [`Session::screen`], and [`Session::end`] it when the app ends as it should. While it runs, a marker in a folder of
+/// running sessions says so, beside a lock the session holds; a session that starts and finds the
+/// marker of one whose lock nobody holds any more — its process is gone — records that one as
+/// [`SessionKind::Unfinished`] first. Sessions of two instances of the app running at once each
+/// keep their own marker, so neither is taken for unfinished while it runs. Make one per launch,
+/// in one process of the app.
 ///
 /// ```no_run
 /// use std::path::Path;
@@ -384,7 +388,7 @@ struct Running {
 ///     .locale("ko-KR")
 ///     .track("school")
 ///     .screens(Screens::new(["home", "list", "report", "settings"]))
-///     .start(&file, &dir.join("session.running"))?;
+///     .start(&file, &dir.join("running"))?;
 ///
 /// session.screen(Some("home"));
 /// session.screen(Some("report"));
@@ -396,7 +400,11 @@ struct Running {
 #[derive(Debug)]
 pub struct Session {
     file: PathBuf,
+    /// This session's marker: what it says, rewritten whole ([`Running`]).
     marker: PathBuf,
+    /// The lock beside it, held while the session runs — released by the operating system when the
+    /// process goes, however it goes. `None` once the session has ended.
+    lock: Mutex<Option<(File, PathBuf)>>,
     head: Head,
     /// When it started, as the marker says.
     started_at: String,
@@ -573,11 +581,80 @@ impl Session {
             version_changed: false,
         };
         append_line(&self.file, &end)?;
-        match std::fs::remove_file(&self.marker) {
-            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
-            _ => Ok(()),
+        remove_if_there(&self.marker)?;
+        // The marker is gone before the lock is let go, so no starting session finds a marker it
+        // could lock while this one still says it runs.
+        if let Some((lock, path)) = self.lock.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            drop(lock);
+            let _ = std::fs::remove_file(path);
         }
+        Ok(())
     }
+}
+
+/// Removes `path`; a file that is not there is nothing to remove.
+fn remove_if_there(path: &Path) -> io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
+/// What a marker file says, if it is one.
+fn read_running(path: &Path) -> Option<Running> {
+    std::fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Running>(&bytes).ok())
+        .filter(|r| r.head.is_valid() && is_time(&r.started))
+}
+
+/// The lock of the session `id` in `running`, taken — or `None` while another holds it (its
+/// session is still running) or it cannot be opened.
+fn take_lock(running: &Path, id: &str) -> Option<(File, PathBuf)> {
+    let path = running.join(format!("{id}.lock"));
+    let file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .ok()?;
+    match file.try_lock() {
+        Ok(()) => Some((file, path)),
+        Err(TryLockError::WouldBlock | TryLockError::Error(_)) => None,
+    }
+}
+
+/// The sessions in `running` that did not end and whose process is gone — each marker whose lock
+/// can be taken — oldest first, with their markers removed. A lock left without its marker (a
+/// session that ended but went before letting its lock go) is removed too.
+fn sessions_gone(running: &Path) -> io::Result<Vec<Running>> {
+    let mut gone = Vec::new();
+    for entry in std::fs::read_dir(running)? {
+        let path = entry?.path();
+        let Some(id) = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .filter(|s| is_id(s))
+        else {
+            continue;
+        };
+        let marker = running.join(format!("{id}.json"));
+        let is_lock = path.extension().is_some_and(|e| e == "lock");
+        if is_lock && marker.exists() {
+            continue; // seen with its marker
+        }
+        let Some((lock, lock_path)) = take_lock(running, id) else {
+            continue; // still running
+        };
+        if let Some(before) = read_running(&marker) {
+            gone.push(before);
+        }
+        remove_if_there(&marker)?;
+        drop(lock);
+        let _ = std::fs::remove_file(lock_path);
+    }
+    gone.sort_by(|a, b| a.started.cmp(&b.started));
+    Ok(gone)
 }
 
 impl SessionBuilder {
@@ -605,21 +682,27 @@ impl SessionBuilder {
         self
     }
 
-    /// Starts the session: appends to `file` that the session before it did not end, if `marker`
-    /// says one is still running, then this session's start, and writes `marker` until
-    /// [`Session::end`]. Call [`trim`](crate::trim) on `file` first.
+    /// Starts the session: appends to `file` each session in the folder `running` that did not end
+    /// and whose process is gone, then this session's start, and keeps its own marker and lock in
+    /// `running` until [`Session::end`]. Give every process of the app that starts sessions the same
+    /// `running`. A file where the folder goes is the single marker earlier versions kept: it is
+    /// read as one more session that may not have ended, then replaced by the folder. Call
+    /// [`trim`](crate::trim) on `file` first.
     pub fn start(
         self,
         file: impl Into<PathBuf>,
-        marker: impl Into<PathBuf>,
+        running: impl Into<PathBuf>,
     ) -> io::Result<Session> {
-        let (file, marker) = (file.into(), marker.into());
+        let (file, running) = (file.into(), running.into());
         let now = utc(std::time::SystemTime::now());
-        if let Some(before) = std::fs::read(&marker)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Running>(&bytes).ok())
-            .filter(|r| r.head.is_valid() && is_time(&r.started))
-        {
+        let mut gone = Vec::new();
+        if running.is_file() {
+            gone.extend(read_running(&running));
+            std::fs::remove_file(&running)?;
+        }
+        std::fs::create_dir_all(&running)?;
+        gone.extend(sessions_gone(&running)?);
+        for before in gone {
             let version_changed = before.head.version != self.head.version;
             let unfinished = SessionEvent {
                 kind: SessionKind::Unfinished,
@@ -650,14 +733,15 @@ impl SessionBuilder {
             version_changed: false,
         };
         append_line(&file, &start)?;
+        let marker = running.join(format!("{}.json", head.session));
+        // The lock first: a session starting meanwhile that finds the marker finds it held.
+        let lock = take_lock(&running, &head.session)
+            .ok_or_else(|| io::Error::other("the new session's lock could not be taken"))?;
         let running = Running {
             head: head.clone(),
             started: now.clone(),
             ending: None,
         };
-        if let Some(dir) = marker.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
         tauri_kit_fs::write_atomic(
             &marker,
             &serde_json::to_vec(&running).map_err(io::Error::other)?,
@@ -665,6 +749,7 @@ impl SessionBuilder {
         Ok(Session {
             file,
             marker,
+            lock: Mutex::new(Some(lock)),
             head,
             started_at: now,
             screens: self.screens,
@@ -791,7 +876,9 @@ mod tests {
             .screens(screens())
             .start(&file, &marker)
             .unwrap();
-        assert!(marker.is_file(), "running");
+        let own = marker.join(format!("{}.json", session.id()));
+        assert!(own.is_file(), "running");
+        assert!(marker.join(format!("{}.lock", session.id())).is_file());
 
         let t0 = Instant::now();
         session.screen_at(Some("home"), t0);
@@ -802,7 +889,7 @@ mod tests {
         session.screen_at(Some("home"), t0 + Duration::from_secs(30));
         session.end_at(t0 + Duration::from_secs(34)).unwrap();
         session.end_at(t0 + Duration::from_secs(99)).unwrap();
-        assert!(!marker.exists(), "ended");
+        assert_eq!(std::fs::read_dir(&marker).unwrap().count(), 0, "ended");
 
         let written = lines(&file);
         assert_eq!(written.len(), 2);
@@ -849,6 +936,105 @@ mod tests {
         assert_eq!(written[2]["event"], "start");
         assert_eq!(written[2]["session"], next.id());
         assert_ne!(next.id(), crashed_id);
+    }
+
+    #[test]
+    fn two_instances_running_at_once_keep_their_own_markers() {
+        let dir = tempfile::tempdir().unwrap();
+        let (file, marker, id) = paths(&dir);
+        let install = InstallId::load_or_create(&id).unwrap();
+        let start = || {
+            Session::builder(&install, "1.2.3")
+                .start(&file, &marker)
+                .unwrap()
+        };
+        let first = start();
+        let second = start();
+        let events = |file: &Path| -> Vec<(String, String)> {
+            lines(file)
+                .iter()
+                .map(|l| {
+                    (
+                        l["event"].as_str().unwrap().to_string(),
+                        l["session"].as_str().unwrap().to_string(),
+                    )
+                })
+                .collect()
+        };
+        assert!(
+            events(&file).iter().all(|(e, _)| e == "start"),
+            "a session still running is not taken for unfinished"
+        );
+
+        first.end().unwrap();
+        let second_id = second.id().to_string();
+        assert!(
+            marker.join(format!("{second_id}.json")).is_file(),
+            "the first ending leaves the second's marker"
+        );
+        drop(second); // the second goes without ending: its process is gone, its lock let go
+        let third = start();
+
+        let written = events(&file);
+        let unfinished: Vec<_> = written.iter().filter(|(e, _)| e == "unfinished").collect();
+        assert_eq!(unfinished, [&("unfinished".to_string(), second_id)]);
+        third.end().unwrap();
+    }
+
+    #[test]
+    fn the_single_marker_of_an_earlier_version_is_read_once_and_becomes_the_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let (file, marker, id) = paths(&dir);
+        let install = InstallId::load_or_create(&id).unwrap();
+        let old = r#"{"install":"00000000000000000000000000000001","session":"00000000000000000000000000000002","version":"1.2.2","os":"windows","arch":"x86_64","started":"2026-01-01T00:00:00Z"}"#;
+        std::fs::write(&marker, old).unwrap();
+
+        let next = Session::builder(&install, "1.2.3")
+            .start(&file, &marker)
+            .unwrap();
+        assert!(marker.is_dir());
+        let written = lines(&file);
+        assert_eq!(written[0]["event"], "unfinished");
+        assert_eq!(written[0]["session"], "00000000000000000000000000000002");
+        assert_eq!(written[0]["version_changed"], true);
+        assert_eq!(written[1]["session"], next.id());
+
+        next.end().unwrap();
+        Session::builder(&install, "1.2.3")
+            .start(&file, &marker)
+            .unwrap()
+            .end()
+            .unwrap();
+        assert_eq!(
+            lines(&file)
+                .iter()
+                .filter(|l| l["event"] == "unfinished")
+                .count(),
+            1,
+            "read once"
+        );
+    }
+
+    #[test]
+    fn a_lock_left_without_its_marker_is_cleared_and_says_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let (file, marker, id) = paths(&dir);
+        let install = InstallId::load_or_create(&id).unwrap();
+        std::fs::create_dir_all(&marker).unwrap();
+        let stray = marker.join("0123456789abcdef0123456789abcdef.lock");
+        std::fs::write(&stray, "").unwrap();
+        std::fs::write(marker.join("notes.txt"), "not ours").unwrap();
+
+        let session = Session::builder(&install, "1.2.3")
+            .start(&file, &marker)
+            .unwrap();
+        assert!(!stray.exists());
+        assert!(
+            marker.join("notes.txt").exists(),
+            "only its own files are touched"
+        );
+        assert_eq!(lines(&file).len(), 1, "only the start");
+        session.end().unwrap();
     }
 
     #[test]
