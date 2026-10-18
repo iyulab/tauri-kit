@@ -71,7 +71,7 @@
 //! declares in a [`Registry`] it compiles in: each event's name and a few fields, each of a closed kind
 //! ([`FieldKind`]: a choice among declared values, some of them, a count that is bucketed or capped,
 //! true or false, a duration). [`Events`] writes only what the registry declares, to its own JSON Lines
-//! file, each line with the session's random id — not the installation's — and drops what does not
+//! file, each line with a random id of the events' own — not the session's or the installation's — and drops what does not
 //! fit, saying so with [`DROPPED_EVENT`] (never with the undeclared name or value). What a sender reads
 //! back goes through [`Registry::verify`] ([`pending_events`]), so a line edited into the file is not
 //! sent; [`Sink::event_item`] makes the Application Insights item.

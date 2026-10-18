@@ -43,14 +43,17 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   as properties of `SessionUnfinished`.
 - `tauri-kit-diagnostics`: events the app declares. `Registry::from_json` reads the app's registry (compile it in):
   each event's name and up to 8 fields of closed kinds — `choice` (one of the declared values), `set`
-  (some of them), `count` (bucketed, or under a declared cap — required, since an exact large number
-  can identify what it counted), `bool`, `duration` (milliseconds, at most a day). A registry that
-  could carry text is refused at load. `Registry::event` turns a name into an `EventName` at start, so a
-  misspelling fails there. `Events::open(&Session, registry, file)` writes all-or-nothing lines with the
-  session id (not the installation id), caps each event per session (`max_per_event`, default 100), and
-  drops what does not fit, writing `kit.events.dropped` once per reason, event and field — without the
-  undeclared name or value. `pending_events` and `Sink::send_pending_events` read lines back through
-  `Registry::verify`; `Sink::event_item` makes the Application Insights event.
+  (some of them), `count` (bucketed, each bound at least twice the one before, or exact up to a cap of at
+  most 1000 — an exact large number can identify what it counted), `bool`, `duration` (milliseconds, at
+  most a day). A registry that could carry text, or that names an event or field twice, is refused at
+  load. `Registry::event` turns a name into an `EventName` at start, so a misspelling fails there.
+  `Events::open(&Session, registry, file)` writes all-or-nothing lines under a random id of the events'
+  own — not the session id, which session lines send beside the installation — caps each event
+  (`max_per_event`, default 100), and drops what does not fit (an undeclared field, a value not of its
+  kind, a field left out or given twice), writing `kit.events.dropped` once per reason, event and field
+  without the undeclared name or value. `pending_events` and `Sink::send_pending_events` read lines
+  back through `Registry::verify`; `Sink::event_item` makes the Application Insights event, with no
+  location derived from the connection.
 
 ## [0.21.0] - 2026-10-17
 
