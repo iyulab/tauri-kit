@@ -10,8 +10,9 @@
 //!   process, a helper process) — a [`Layer`].
 //! - **kind**: a type or class name, or a code of the app's own, kept only if it is a plain
 //!   identifier — whole, or replaced by [`UNRECOGNIZED_KIND`].
-//! - **details**: facts the app names ([`Report::detail`]) — a status code, an error code of its
-//!   own — each kept only if its value is a plain identifier or a whole number.
+//! - **details**: facts the app's [`Registry`] declares for the layer under `reports` — a status
+//!   code, an error code of its own — each kept only if its value is of its declared kind
+//!   ([`Registry::layer`], [`Layer::report`]).
 //! - **frames**: the lines of a stack the layer's [`FrameRule`] recognises as the app's own code,
 //!   rewritten to a file name and position or a method name; every other line is dropped whole.
 //!   Rules are provided for a web bundle the app serves ([`WebBundle`]), the app's Rust source
@@ -19,22 +20,28 @@
 //! - **version**, **os**, **arch** and **time** (UTC, to the second).
 //!
 //! A [`Reporter`] appends the reports of one launch to a JSON Lines file the person can read —
-//! exactly what would be sent — writing each failure once and at most [`MAX_REPORTS`]. [`trim`]
-//! keeps that file from growing without end. [`Sink`] makes what goes out to an Azure Application
-//! Insights resource, as exception telemetry; with the `appinsights` feature it also sends what the
-//! file gained since the last send and keeps what could not go out for the next launch. An app that
-//! sends with an HTTP client of its own reads the same with [`unsent`] and records what went with
-//! [`mark_sent`].
+//! exactly what would be sent — writing each failure once and at most [`MAX_REPORTS`].
+//!
+//! **One stream, many writers.** A stream — reports, session events, events — is kept in a folder
+//! with one [`Segment`] per process that writes it: two instances of the app, a shell and its
+//! backend each append to a file of their own, held by a lock the operating system lets go when the
+//! process goes. A sender reads every segment ([`segments`]), and [`tidy`] keeps the folder from
+//! growing without end, deleting only segments no process writes any more. [`Sink`] makes what goes
+//! out to an Azure Application Insights resource, as exception telemetry; with the `appinsights`
+//! feature it also sends what a stream's segments gained since the last send and keeps what could
+//! not go out for the next launch. An app that sends with an HTTP client of its own reads each
+//! segment with [`unsent`] and records what went with [`mark_sent`]. [`adopt`] takes in the single
+//! file a stream was kept in before.
 //!
 //! ```no_run
 //! use std::path::Path;
-//! use tauri_kit_diagnostics::{trim, FrameRule, Layer, Report, Reporter, MAX_FILE_BYTES};
+//! use tauri_kit_diagnostics::{tidy, FrameRule, Layer, Report, Reporter, Segment, MAX_STREAM_BYTES};
 //!
-//! let dir = Path::new("/path/to/logs");
-//! let (file, sent) = (dir.join("reports.jsonl"), dir.join("reports.sent"));
-//! // Before this launch writes or sends anything: the file is evidence, not an archive.
-//! trim(&file, &sent, MAX_FILE_BYTES)?;
-//! let reporter = Reporter::new(&file);
+//! let reports = Path::new("/path/to/logs/reports");
+//! // Before this launch writes or sends anything: the folder is evidence, not an archive.
+//! tidy(reports, MAX_STREAM_BYTES)?;
+//! let segment = Segment::open(reports)?; // kept for as long as the reporter writes
+//! let reporter = Reporter::new(segment.file());
 //!
 //! let ui = Layer::new("ui", FrameRule::web_bundle());
 //! let shell = Layer::new("shell", FrameRule::rust_source());
@@ -62,7 +69,7 @@
 //! the platform, the time, the interface's language, the app's own name for its edition, and time
 //! on each of the app's [`Screens`] — a name not among them is recorded as [`UNRECOGNIZED_KIND`],
 //! whole. [`Sink::session_items`] makes Application Insights users, sessions and page views of
-//! them, and [`Sink`] sends a sessions file as it sends a reports file ([`Telemetry`], [`pending`]).
+//! them, and [`Sink`] sends a sessions stream as it sends a reports stream ([`Telemetry`], [`pending`]).
 //! Whether an app may send them, and what it tells the person, is the app's to decide.
 //!
 //! # Events
@@ -92,6 +99,7 @@ mod queue;
 mod report;
 mod session;
 mod sink;
+mod stream;
 
 #[cfg(any(feature = "appinsights", feature = "appinsights-rustls"))]
 mod appinsights;
@@ -101,10 +109,7 @@ pub use event::{
     RegistryError, Value, Why, DROPPED_EVENT, MAX_COUNT, MAX_DURATION, MAX_FIELDS, MAX_PER_EVENT,
     MAX_VALUES,
 };
-pub use queue::{
-    mark_sent, pending, trim, unsent, Batch, Pending, Reporter, CAPPED_KIND, MAX_FILE_BYTES,
-    MAX_REPORTS,
-};
+pub use queue::{mark_sent, pending, unsent, Batch, Pending, Reporter, CAPPED_KIND, MAX_REPORTS};
 pub use report::{
     FrameRule, Layer, Report, RustSource, WebBundle, MAX_DETAILS, MAX_FRAMES, UNRECOGNIZED_KIND,
 };
@@ -113,6 +118,7 @@ pub use session::{
     MAX_SCREENS,
 };
 pub use sink::{Sink, Telemetry};
+pub use stream::{adopt, segments, tidy, Segment, SegmentFiles, MAX_STREAM_BYTES};
 
 /// The HTTP client [`Sink`] sends with, so an app can build its own agent with the same version.
 #[cfg(any(feature = "appinsights", feature = "appinsights-rustls"))]

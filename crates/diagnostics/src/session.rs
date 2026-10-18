@@ -2,7 +2,7 @@
 //! what a screen showed, what was typed into it, or who the person is.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{File, OpenOptions, TryLockError};
+use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::queue::append_line;
 use crate::report::{plain_kind, utc};
+use crate::stream::hold;
 use crate::UNRECOGNIZED_KIND;
 
 /// The most screens one session event carries; time on screens past it is left out.
@@ -378,17 +379,17 @@ struct Running {
 ///
 /// ```no_run
 /// use std::path::Path;
-/// use tauri_kit_diagnostics::{trim, InstallId, Screens, Session, MAX_FILE_BYTES};
+/// use tauri_kit_diagnostics::{tidy, InstallId, Screens, Segment, Session, MAX_STREAM_BYTES};
 ///
 /// let dir = Path::new("/path/to/logs");
-/// let (file, sent) = (dir.join("sessions.jsonl"), dir.join("sessions.sent"));
-/// trim(&file, &sent, MAX_FILE_BYTES)?;
+/// tidy(&dir.join("sessions"), MAX_STREAM_BYTES)?;
+/// let segment = Segment::open(dir.join("sessions"))?;
 /// let install = InstallId::load_or_create(&dir.join("install-id"))?;
 /// let session = Session::builder(&install, env!("CARGO_PKG_VERSION"))
 ///     .locale("ko-KR")
 ///     .track("school")
 ///     .screens(Screens::new(["home", "list", "report", "settings"]))
-///     .start(&file, &dir.join("running"))?;
+///     .start(segment.file(), &dir.join("running"))?;
 ///
 /// session.screen(Some("home"));
 /// session.screen(Some("report"));
@@ -608,22 +609,6 @@ fn read_running(path: &Path) -> Option<Running> {
         .filter(|r| r.head.is_valid() && is_time(&r.started))
 }
 
-/// The lock of the session `id` in `running`, taken — or `None` while another holds it (its
-/// session is still running) or it cannot be opened.
-fn take_lock(running: &Path, id: &str) -> Option<(File, PathBuf)> {
-    let path = running.join(format!("{id}.lock"));
-    let file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&path)
-        .ok()?;
-    match file.try_lock() {
-        Ok(()) => Some((file, path)),
-        Err(TryLockError::WouldBlock | TryLockError::Error(_)) => None,
-    }
-}
-
 /// The sessions in `running` that did not end and whose process is gone — each marker whose lock
 /// can be taken — oldest first, with their markers removed. A lock left without its marker (a
 /// session that ended but went before letting its lock go) is removed too.
@@ -643,7 +628,7 @@ fn sessions_gone(running: &Path) -> io::Result<Vec<Running>> {
         if is_lock && marker.exists() {
             continue; // seen with its marker
         }
-        let Some((lock, lock_path)) = take_lock(running, id) else {
+        let Some((lock, lock_path)) = hold(running, id) else {
             continue; // still running
         };
         if let Some(before) = read_running(&marker) {
@@ -687,7 +672,7 @@ impl SessionBuilder {
     /// `running` until [`Session::end`]. Give every process of the app that starts sessions the same
     /// `running`. A file where the folder goes is the single marker earlier versions kept: it is
     /// read as one more session that may not have ended, then replaced by the folder. Call
-    /// [`trim`](crate::trim) on `file` first.
+    /// [`tidy`](crate::tidy) on the stream `file` is a segment of first.
     pub fn start(
         self,
         file: impl Into<PathBuf>,
@@ -735,7 +720,7 @@ impl SessionBuilder {
         append_line(&file, &start)?;
         let marker = running.join(format!("{}.json", head.session));
         // The lock first: a session starting meanwhile that finds the marker finds it held.
-        let lock = take_lock(&running, &head.session)
+        let lock = hold(&running, &head.session)
             .ok_or_else(|| io::Error::other("the new session's lock could not be taken"))?;
         let running = Running {
             head: head.clone(),

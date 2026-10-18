@@ -65,6 +65,17 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ### Changed
 
+- `tauri-kit-diagnostics` (**breaking**): a stream — reports, session events, events — is kept in a folder,
+  one segment per process that writes it. `Segment::open(dir)` gives a process a file of its own (hand
+  `Segment::file` to `Reporter::new`, `Events::open` or `SessionBuilder::start`) beside a lock it holds while
+  the `Segment` lives, which the operating system lets go when the process goes. `segments(dir)` lists every
+  segment for a sender — live ones too, since only whole lines are read — and `Sink::send_pending`,
+  `send_pending_of` and `send_pending_events` now take the folder and send from each. `tidy(dir, max_bytes)`
+  replaces `trim`: it deletes only segments whose lock it can take, once their whole lines are sent, then the
+  oldest ended ones past the limit (`MAX_STREAM_BYTES`, was `MAX_FILE_BYTES`); a segment still written is never
+  rewritten, so two instances, or a shell and its backend, no longer lose each other's lines. `adopt(dir, file,
+  sent)` takes in the single file a stream was kept in, with what it had sent, as one ended segment. `pending`,
+  `unsent` and `mark_sent` read and record one segment, as before.
 - `tauri-kit-diagnostics` (**breaking**): `SessionBuilder::start(file, running)` takes a folder of running
   sessions instead of one marker file. Each session keeps its own marker there beside a lock it holds while it
   runs, and a starting session records as unfinished only those whose lock nobody holds — their process is

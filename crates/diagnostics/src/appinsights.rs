@@ -4,7 +4,9 @@
 use std::io;
 use std::path::Path;
 
-use crate::{mark_sent, pending, pending_events, Pending, Registry, Report, Sink, Telemetry};
+use crate::{
+    mark_sent, pending, pending_events, segments, Pending, Registry, Report, Sink, Telemetry,
+};
 
 impl Sink {
     /// An agent for the ingestion endpoint: the OS's certificate store and the proxy the PC is set
@@ -29,19 +31,20 @@ impl Sink {
             .into()
     }
 
-    /// Sends the reports `file` has gained since the last send, and records in `sent` how far
-    /// into `file` has been sent — [`Sink::send_pending_of`] for a file of [`Report`]s.
+    /// Sends the reports the stream kept in `dir` has gained since the last send —
+    /// [`Sink::send_pending_of`] for a stream of [`Report`]s.
     ///
     /// Returns how many reports the endpoint took.
-    pub fn send_pending(&self, agent: &ureq::Agent, file: &Path, sent: &Path) -> io::Result<usize> {
-        self.send_pending_of::<Report>(agent, file, sent)
+    pub fn send_pending(&self, agent: &ureq::Agent, dir: &Path) -> io::Result<usize> {
+        self.send_pending_of::<Report>(agent, dir)
     }
 
-    /// Sends the lines a file of `T` — reports, [`SessionEvent`](crate::SessionEvent)s — has
-    /// gained since the last send, and records in `sent` how far into `file` has been sent.
+    /// Sends the lines the [`segments`](crate::segments) of a stream of `T` — reports,
+    /// [`SessionEvent`](crate::SessionEvent)s — kept in `dir` have gained since the last send, and
+    /// records in each segment how far into it has been sent.
     ///
     /// Lines go out in the stretches [`pending`](crate::pending) reads, each line as the items
-    /// [`Telemetry::items`] makes of it, and `sent` is written after each stretch. Stops with an
+    /// [`Telemetry::items`] makes of it, and a segment's sent offset is written after each stretch. Stops with an
     /// error at the first request that fails for a reason that may pass — the network, or an
     /// answer [`Sink::retry_later`] names — and leaves the rest for the next call. Any other answer
     /// counts as handled: what was not taken then never will be, and is not sent again. Returns how
@@ -53,30 +56,34 @@ impl Sink {
     pub fn send_pending_of<T: Telemetry>(
         &self,
         agent: &ureq::Agent,
-        file: &Path,
-        sent: &Path,
+        dir: &Path,
     ) -> io::Result<usize> {
-        self.send_stretches(agent, pending::<T>(file, sent)?, sent, |line| {
-            line.items(self)
-        })
+        let mut count = 0;
+        for segment in segments(dir)? {
+            let stretches = pending::<T>(&segment.file, &segment.sent)?;
+            count +=
+                self.send_stretches(agent, stretches, &segment.sent, |line| line.items(self))?;
+        }
+        Ok(count)
     }
 
-    /// Sends the declared events an events file has gained since the last send — each line verified
-    /// by `registry` first ([`pending_events`]), so a line edited into the file is never sent — as
-    /// [`Sink::event_item`]s, the way [`Sink::send_pending_of`] sends.
+    /// Sends the declared events the stream kept in `dir` has gained since the last send — each line
+    /// verified by `registry` first ([`pending_events`]), so a line edited into a segment is never
+    /// sent — as [`Sink::event_item`]s, the way [`Sink::send_pending_of`] sends.
     pub fn send_pending_events(
         &self,
         agent: &ureq::Agent,
         registry: &Registry,
-        file: &Path,
-        sent: &Path,
+        dir: &Path,
     ) -> io::Result<usize> {
-        self.send_stretches(
-            agent,
-            pending_events(registry, file, sent)?,
-            sent,
-            |event| vec![self.event_item(event)],
-        )
+        let mut count = 0;
+        for segment in segments(dir)? {
+            let stretches = pending_events(registry, &segment.file, &segment.sent)?;
+            count += self.send_stretches(agent, stretches, &segment.sent, |event| {
+                vec![self.event_item(event)]
+            })?;
+        }
+        Ok(count)
     }
 
     fn send_stretches<T>(
@@ -115,7 +122,7 @@ impl Sink {
 mod tests {
     use super::*;
     use crate::queue::BATCH;
-    use crate::{FrameRule, Layer, Report, Reporter, SessionEvent};
+    use crate::{FrameRule, Layer, Report, Reporter, Segment, SessionEvent};
 
     fn ui() -> Layer {
         Layer::new("ui", FrameRule::web_bundle())
@@ -169,18 +176,18 @@ mod tests {
             .into()
     }
 
-    fn paths(dir: &tempfile::TempDir) -> (std::path::PathBuf, std::path::PathBuf) {
-        (
-            dir.path().join("reports.jsonl"),
-            dir.path().join("reports.sent"),
-        )
+    /// A reports stream in `dir`, and this process's segment of it.
+    fn stream(dir: &tempfile::TempDir) -> (std::path::PathBuf, Segment) {
+        let stream = dir.path().join("reports");
+        let segment = Segment::open(&stream).unwrap();
+        (stream, segment)
     }
 
     #[test]
     fn sends_what_was_written_since_the_last_send() {
         let dir = tempfile::tempdir().unwrap();
-        let (file, sent) = paths(&dir);
-        let reporter = Reporter::new(&file);
+        let (stream, segment) = stream(&dir);
+        let reporter = Reporter::new(segment.file());
         reporter
             .record(Report::new(&ui(), "TypeError", "", "1.2.3"))
             .unwrap();
@@ -194,7 +201,7 @@ mod tests {
             .unwrap();
 
         let (sink, server) = endpoint(vec![200]);
-        assert_eq!(sink.send_pending(&loopback(), &file, &sent).unwrap(), 2);
+        assert_eq!(sink.send_pending(&loopback(), &stream).unwrap(), 2);
         let bodies = server.join().unwrap();
         let items = bodies[0].as_array().unwrap();
         assert_eq!(items.len(), 2);
@@ -205,7 +212,7 @@ mod tests {
         assert_eq!(items[1]["tags"]["ai.cloud.role"], "host");
 
         // Nothing new: no request at all.
-        assert_eq!(sink.send_pending(&loopback(), &file, &sent).unwrap(), 0);
+        assert_eq!(sink.send_pending(&loopback(), &stream).unwrap(), 0);
 
         // Only what came after.
         reporter
@@ -217,7 +224,7 @@ mod tests {
             ))
             .unwrap();
         let (sink, server) = endpoint(vec![200]);
-        assert_eq!(sink.send_pending(&loopback(), &file, &sent).unwrap(), 1);
+        assert_eq!(sink.send_pending(&loopback(), &stream).unwrap(), 1);
         assert_eq!(
             server.join().unwrap()[0][0]["data"]["baseData"]["exceptions"][0]["typeName"],
             "Panic"
@@ -227,18 +234,15 @@ mod tests {
     #[test]
     fn sends_in_batches() {
         let dir = tempfile::tempdir().unwrap();
-        let (file, sent) = paths(&dir);
-        let reporter = Reporter::new(&file).max_reports(BATCH + 10);
+        let (stream, segment) = stream(&dir);
+        let reporter = Reporter::new(segment.file()).max_reports(BATCH + 10);
         for i in 0..BATCH + 1 {
             reporter
                 .record(Report::new(&ui(), &format!("Failure{i}"), "", "1.2.3"))
                 .unwrap();
         }
         let (sink, server) = endpoint(vec![200, 200]);
-        assert_eq!(
-            sink.send_pending(&loopback(), &file, &sent).unwrap(),
-            BATCH + 1
-        );
+        assert_eq!(sink.send_pending(&loopback(), &stream).unwrap(), BATCH + 1);
         let bodies = server.join().unwrap();
         assert_eq!(bodies[0].as_array().unwrap().len(), BATCH);
         assert_eq!(bodies[1].as_array().unwrap().len(), 1);
@@ -247,52 +251,56 @@ mod tests {
     #[test]
     fn keeps_the_reports_for_later_when_the_endpoint_is_busy() {
         let dir = tempfile::tempdir().unwrap();
-        let (file, sent) = paths(&dir);
-        Reporter::new(&file)
+        let (stream, segment) = stream(&dir);
+        Reporter::new(segment.file())
             .record(Report::new(&ui(), "TypeError", "", "1.2.3"))
             .unwrap();
 
         for busy in [503, 429, 408] {
             let (sink, server) = endpoint(vec![busy]);
-            assert!(sink.send_pending(&loopback(), &file, &sent).is_err());
+            assert!(sink.send_pending(&loopback(), &stream).is_err());
             server.join().unwrap();
         }
 
         let (sink, server) = endpoint(vec![200]);
-        assert_eq!(sink.send_pending(&loopback(), &file, &sent).unwrap(), 1);
+        assert_eq!(sink.send_pending(&loopback(), &stream).unwrap(), 1);
         server.join().unwrap();
     }
 
     #[test]
     fn does_not_send_again_what_the_endpoint_will_never_take() {
         let dir = tempfile::tempdir().unwrap();
-        let (file, sent) = paths(&dir);
-        Reporter::new(&file)
+        let (stream, segment) = stream(&dir);
+        Reporter::new(segment.file())
             .record(Report::new(&ui(), "TypeError", "", "1.2.3"))
             .unwrap();
 
         let (sink, server) = endpoint(vec![400]);
-        assert_eq!(sink.send_pending(&loopback(), &file, &sent).unwrap(), 0);
+        assert_eq!(sink.send_pending(&loopback(), &stream).unwrap(), 0);
         server.join().unwrap();
         // The line counts as handled: a second send makes no request.
-        assert_eq!(sink.send_pending(&loopback(), &file, &sent).unwrap(), 0);
+        assert_eq!(sink.send_pending(&loopback(), &stream).unwrap(), 0);
     }
 
     #[test]
     fn passes_over_lines_that_are_not_reports_and_a_line_still_being_written() {
         let dir = tempfile::tempdir().unwrap();
-        let (file, sent) = paths(&dir);
+        let (stream, segment) = stream(&dir);
         // A line without a time is not a report.
         let old = r#"{"layer":"ui","kind":"TypeError","frames":[],"version":"0.1.0","os":"windows","arch":"x86_64"}"#;
         let report = serde_json::to_string(&Report::new(&ui(), "RangeError", "", "1.2.3")).unwrap();
-        std::fs::write(&file, format!("{old}\n{report}\n{{\"layer\":\"ui\"")).unwrap();
+        std::fs::write(
+            segment.file(),
+            format!("{old}\n{report}\n{{\"layer\":\"ui\""),
+        )
+        .unwrap();
 
         let (sink, server) = endpoint(vec![200]);
-        assert_eq!(sink.send_pending(&loopback(), &file, &sent).unwrap(), 1);
+        assert_eq!(sink.send_pending(&loopback(), &stream).unwrap(), 1);
         let bodies = server.join().unwrap();
         assert_eq!(bodies[0].as_array().unwrap().len(), 1);
         assert_eq!(
-            std::fs::read_to_string(&sent).unwrap(),
+            std::fs::read_to_string(segment.file().with_extension("sent")).unwrap(),
             (old.len() + 1 + report.len() + 1).to_string()
         );
     }
@@ -300,14 +308,14 @@ mod tests {
     #[test]
     fn a_new_file_shorter_than_what_was_sent_is_sent_from_its_start() {
         let dir = tempfile::tempdir().unwrap();
-        let (file, sent) = paths(&dir);
-        std::fs::write(&sent, "999999").unwrap();
-        Reporter::new(&file)
+        let (stream, segment) = stream(&dir);
+        std::fs::write(segment.file().with_extension("sent"), "999999").unwrap();
+        Reporter::new(segment.file())
             .record(Report::new(&ui(), "TypeError", "", "1.2.3"))
             .unwrap();
 
         let (sink, server) = endpoint(vec![200]);
-        assert_eq!(sink.send_pending(&loopback(), &file, &sent).unwrap(), 1);
+        assert_eq!(sink.send_pending(&loopback(), &stream).unwrap(), 1);
         server.join().unwrap();
     }
 
@@ -315,14 +323,12 @@ mod tests {
     fn sends_a_sessions_file_and_keeps_it_while_offline() {
         use crate::{InstallId, Screens, Session};
         let dir = tempfile::tempdir().unwrap();
-        let (file, sent) = (
-            dir.path().join("sessions.jsonl"),
-            dir.path().join("sessions.sent"),
-        );
+        let sessions = dir.path().join("sessions");
+        let segment = Segment::open(&sessions).unwrap();
         let install = InstallId::load_or_create(&dir.path().join("install-id")).unwrap();
         let session = Session::builder(&install, "1.2.3")
             .screens(Screens::new(["home", "report"]))
-            .start(&file, dir.path().join("running"))
+            .start(segment.file(), dir.path().join("running"))
             .unwrap();
         session.screen(Some("home"));
         session.screen(Some("report"));
@@ -334,12 +340,12 @@ mod tests {
             track_url: "http://127.0.0.1:9/v2.1/track".into(),
         };
         assert!(offline
-            .send_pending_of::<SessionEvent>(&loopback(), &file, &sent)
+            .send_pending_of::<SessionEvent>(&loopback(), &sessions)
             .is_err());
 
         let (sink, server) = endpoint(vec![200]);
         assert_eq!(
-            sink.send_pending_of::<SessionEvent>(&loopback(), &file, &sent)
+            sink.send_pending_of::<SessionEvent>(&loopback(), &sessions)
                 .unwrap(),
             2,
             "two lines: the start and the end"
@@ -354,7 +360,7 @@ mod tests {
             .iter()
             .all(|i| i["tags"]["ai.user.id"] == install.as_str()));
         assert_eq!(
-            sink.send_pending_of::<SessionEvent>(&loopback(), &file, &sent)
+            sink.send_pending_of::<SessionEvent>(&loopback(), &sessions)
                 .unwrap(),
             0,
             "nothing new"
@@ -362,14 +368,14 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_file_is_nothing_to_send() {
+    fn a_missing_folder_is_nothing_to_send() {
         let dir = tempfile::tempdir().unwrap();
-        let (file, sent) = paths(&dir);
+        let stream = dir.path().join("reports");
         let sink = Sink {
             instrumentation_key: "k".into(),
             track_url: "http://127.0.0.1:9/v2.1/track".into(),
         };
-        assert_eq!(sink.send_pending(&loopback(), &file, &sent).unwrap(), 0);
+        assert_eq!(sink.send_pending(&loopback(), &stream).unwrap(), 0);
     }
 
     /// Sends one report to a real resource over HTTPS — the OS's TLS and certificate store. Run by
@@ -381,8 +387,8 @@ mod tests {
         let sink = Sink::parse(&std::env::var("TAURI_KIT_APPINSIGHTS_CONNECTION_STRING").unwrap())
             .unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let (file, sent) = paths(&dir);
-        Reporter::new(&file)
+        let (stream, segment) = stream(&dir);
+        Reporter::new(segment.file())
             .record(Report::new(
                 &Layer::new("shell", FrameRule::rust_source()),
                 "EnvelopeProbe",
@@ -390,6 +396,6 @@ mod tests {
                 env!("CARGO_PKG_VERSION"),
             ))
             .unwrap();
-        assert_eq!(sink.send_pending(&Sink::agent(), &file, &sent).unwrap(), 1);
+        assert_eq!(sink.send_pending(&Sink::agent(), &stream).unwrap(), 1);
     }
 }
