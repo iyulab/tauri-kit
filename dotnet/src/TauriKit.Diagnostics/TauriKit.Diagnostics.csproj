@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <PackageId>TauriKit.Diagnostics</PackageId>
+    <Description>The .NET side of the tauri-kit-diagnostics crate: events a desktop app's .NET backend declares in the same registry, written in closed kinds to the same JSON Lines shape — a choice among declared values, a bucketed or capped count, true/false, a duration — so no field can carry text, and the app's shell reads and sends them with the crate.</Description>
+    <PackageTags>tauri;diagnostics;telemetry;privacy;desktop</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IsAotCompatible>true</IsAotCompatible>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <!-- MIT asks that its notice travel with each copy; the expression alone does not carry it. -->
+    <None Include="..\..\..\LICENSE" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="TauriKit.Diagnostics.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -1,7 +1,8 @@
 # tauri-kit for .NET
 
 The .NET halves of tauri-kit, released under the same version as the crates: the loopback backend
-(below) and the Windows credential store ([`TauriKit.Credentials`](#tauritkitcredentials)).
+(below), the Windows credential store ([`TauriKit.Credentials`](#tauritkitcredentials)) and declared
+diagnostics events ([`TauriKit.Diagnostics`](#tauritkitdiagnostics)).
 
 ## TauriKit.Sidecar.Loopback
 
@@ -156,3 +157,23 @@ credentials.Delete("api-key");            // not there is not an error
 
 `BuildKinds.Of` reads whether the app's assembly was compiled without optimization (a Debug build →
 `Dev`); a test run passes `BuildKind.Test` itself. macOS and Linux stores are not covered on the .NET side.
+
+## TauriKit.Diagnostics
+
+The .NET side of the [`tauri-kit-diagnostics`](https://github.com/iyulab/tauri-kit/tree/main/crates/diagnostics)
+crate's declared events, for a backend process: the same registry JSON (embed it in the app — whoever can
+edit it decides what is written), refused by the same rules, and lines in the crate's shape, so the app's
+shell verifies them against its registry and sends them (`pending_events`). Fields are only of closed
+kinds — a choice among declared values, some of them (`Subset`), a count bucketed or capped at 1000,
+true/false, a duration — so none can carry text; what does not fit is dropped and said once, without the
+undeclared name or value. Each line carries a random id of its own, never the installation's. One
+writer per file: give each process its own.
+
+```csharp
+var registry = Registry.FromJson(embeddedRegistryJson);
+var exported = registry.Event("export.finished");          // a misspelling fails here, at start
+var events = new Events(registry, appVersion, Path.Combine(logDir, "backend-events.jsonl"));
+events.Record(exported, ("format", Value.Choice("csv")), ("rows", Value.Count(rows)), ("took", Value.Duration(elapsed)));
+```
+
+The crate's `tests/cases` hold the registry and the lines both languages must write for the same scene.

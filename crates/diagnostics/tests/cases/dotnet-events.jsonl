@@ -1,0 +1,6 @@
+{"name":"export.finished","session":"00000000000000000000000000000000","version":"1.2.3","os":"windows","arch":"x86_64","time":"2026-01-01T00:00:00Z","fields":{"format":"csv","rows":100,"took":1250}}
+{"name":"search.used","session":"00000000000000000000000000000000","version":"1.2.3","os":"windows","arch":"x86_64","time":"2026-01-01T00:00:00Z","fields":{"empty":false,"filters":["date","size"],"results":7}}
+{"name":"kit.events.dropped","session":"00000000000000000000000000000000","version":"1.2.3","os":"windows","arch":"x86_64","time":"2026-01-01T00:00:00Z","fields":{"event":"export.finished","field":"format","reason":"bad_value"}}
+{"name":"kit.events.dropped","session":"00000000000000000000000000000000","version":"1.2.3","os":"windows","arch":"x86_64","time":"2026-01-01T00:00:00Z","fields":{"event":"export.finished","reason":"unknown_field"}}
+{"name":"app.opened","session":"00000000000000000000000000000000","version":"1.2.3","os":"windows","arch":"x86_64","time":"2026-01-01T00:00:00Z"}
+{"name":"kit.events.dropped","session":"00000000000000000000000000000000","version":"1.2.3","os":"windows","arch":"x86_64","time":"2026-01-01T00:00:00Z","fields":{"event":"app.opened","reason":"capped"}}

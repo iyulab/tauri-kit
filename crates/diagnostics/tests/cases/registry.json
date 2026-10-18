@@ -1,0 +1,19 @@
+{
+  "events": {
+    "export.finished": {
+      "fields": {
+        "format": { "kind": "choice", "values": ["csv", "xlsx"] },
+        "rows": { "kind": "count", "bucket": [0, 10, 100, 1000] },
+        "took": { "kind": "duration" }
+      }
+    },
+    "search.used": {
+      "fields": {
+        "filters": { "kind": "set", "values": ["date", "kind", "size"] },
+        "results": { "kind": "count", "max": 50 },
+        "empty": { "kind": "bool" }
+      }
+    },
+    "app.opened": {}
+  }
+}

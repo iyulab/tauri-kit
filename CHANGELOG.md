@@ -54,6 +54,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   without the undeclared name or value. `pending_events` and `Sink::send_pending_events` read lines
   back through `Registry::verify`; `Sink::event_item` makes the Application Insights event, with no
   location derived from the connection.
+- New NuGet package `TauriKit.Diagnostics`: declared events from a .NET backend — the same registry JSON, refused by
+  the same rules, written to the crate's line shape (`Events.Record`), so the shell verifies and sends them with
+  `pending_events`. The crate's `tests/cases` hold the shared registry and the lines both languages write for one
+  scene; a test on each side checks them.
 
 ### Changed
 
