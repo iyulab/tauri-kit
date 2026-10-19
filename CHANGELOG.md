@@ -17,6 +17,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   it: a rename, or a copy and then removal when the rename is refused, never over anything already at the
   new place, and safe to run again.
 
+### Fixed
+
+- `tauri-kit-credentials` and `TauriKit.Credentials`: on Windows a secret longer than one Credential Manager
+  entry holds (2,560 bytes — 1,280 UTF-16 units, which a signed-in OIDC session passes) is no longer refused.
+  It is kept in parts, in one layout both languages read and write: the first entry carries a marker and the
+  part count, further parts sit under `<account>/<i>`; reading joins them, and a missing part is an error,
+  never a cut secret. Writing a shorter secret or deleting removes the parts left behind. A secret that fits
+  is one entry exactly as before, so existing entries read unchanged. A secret may no longer begin with
+  `'\0'` (the marker's first character).
+
 ### Changed
 
 - `tauri-kit-diagnostics`: `InstallId` is `tauri_kit_state::InstallId`, re-exported — same name and

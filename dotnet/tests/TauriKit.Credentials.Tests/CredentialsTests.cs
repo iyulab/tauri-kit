@@ -83,20 +83,77 @@ public sealed class CredentialsTests
     }
 
     [Fact]
-    public void A_secret_longer_than_the_store_allows_is_refused_before_writing()
+    public void A_session_longer_than_one_entry_round_trips_through_the_store()
+    {
+        if (!OperatingSystem.IsWindows()) { Assert.Skip("Credential Manager is Windows only"); return; }
+        // About what a signed-in OIDC session takes (two JWTs and a refresh token): past 1,280 UTF-16 units.
+        var credentials = new Credentials($"tauri-kit.credentials-tests.{Environment.ProcessId}", BuildKind.Test);
+        var secret = string.Concat(Enumerable.Repeat("eyJhbGciOiJSUzI1NiIsImtpZCI6IjEifQ.😀", 120));
+        try
+        {
+            credentials.Set("long", secret);
+            Assert.Equal(secret, credentials.Get("long"));
+            credentials.Set("long", "short again");
+            Assert.Equal("short again", credentials.Get("long"));
+            Assert.Null(Raw(credentials, "long/1"));
+        }
+        finally
+        {
+            credentials.Delete("long");
+        }
+        Assert.Null(credentials.Get("long"));
+    }
+
+    [Fact]
+    [SupportedOSPlatform("windows")] // a Windows-only skip guard does not reach the analyzer inside a lambda
+    public void A_long_secret_is_laid_out_in_parts_exactly_as_the_crate_lays_it_out()
+    {
+        if (!OperatingSystem.IsWindows()) { Assert.Skip("Credential Manager is Windows only"); return; }
+        // The crate's mock-store test `parts_are_laid_out_the_same_in_both_languages` pins the same strings.
+        var credentials = new Credentials($"tauri-kit.credentials-tests.layout.{Environment.ProcessId}", BuildKind.Test, partUnits: 40);
+        try
+        {
+            credentials.Set("s", new string('x', 100));
+            Assert.Equal("\0tauri-kit-credentials/parts=4\0" + new string('x', 8), Raw(credentials, "s"));
+            Assert.Equal(new string('x', 40), Raw(credentials, "s/1"));
+            Assert.Equal(new string('x', 12), Raw(credentials, "s/3"));
+            Assert.Equal(new string('x', 100), credentials.Get("s"));
+
+            credentials.Delete("s/2"); // a part gone: an error, not a cut secret
+            Assert.Throws<InvalidDataException>(() => credentials.Get("s"));
+        }
+        finally
+        {
+            credentials.Delete("s");
+        }
+        Assert.Null(Raw(credentials, "s"));
+        Assert.Null(Raw(credentials, "s/1"));
+        Assert.Null(Raw(credentials, "s/3"));
+    }
+
+    [Fact]
+    [SupportedOSPlatform("windows")] // a Windows-only skip guard does not reach the analyzer inside a lambda
+    public void A_secret_may_not_begin_with_nul()
     {
         if (!OperatingSystem.IsWindows()) { Assert.Skip("Credential Manager is Windows only"); return; }
         var credentials = new Credentials("com.example.app", BuildKind.Test);
-        var refused = false;
+        Assert.Throws<ArgumentException>(() => credentials.Set("a", "\0x"));
+        Assert.Null(credentials.Get("a"));
+    }
+
+    // One entry as stored, with no joining of parts.
+    [SupportedOSPlatform("windows")]
+    private static unsafe string? Raw(Credentials credentials, string account)
+    {
+        if (!Native.CredRead(credentials.TargetName(account), Native.CredTypeGeneric, 0, out var raw)) return null;
         try
         {
-            credentials.Set("a", new string('x', 1281));
+            var c = (Native.Credential*)raw;
+            return System.Text.Encoding.Unicode.GetString(new ReadOnlySpan<byte>((void*)c->CredentialBlob, (int)c->CredentialBlobSize));
         }
-        catch (ArgumentException)
+        finally
         {
-            refused = true;
+            Native.CredFree(raw);
         }
-        Assert.True(refused);
-        Assert.Null(credentials.Get("a"));
     }
 }

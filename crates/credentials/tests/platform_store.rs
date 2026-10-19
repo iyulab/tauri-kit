@@ -16,3 +16,19 @@ fn round_trip_through_the_platform_store() {
     credentials.delete("probe").unwrap();
     assert_eq!(credentials.get("probe").unwrap(), None);
 }
+
+#[test]
+#[ignore = "touches the real OS credential store"]
+fn a_session_longer_than_one_windows_entry_round_trips() {
+    // About what a signed-in OIDC session takes (two JWTs and a refresh token): past 1,280 UTF-16 units.
+    let credentials = Credentials::new("tauri-kit.credentials.platform-check", build_kind!());
+    let secret = "eyJhbGciOiJSUzI1NiIsImtpZCI6IjEifQ.".repeat(120);
+    credentials.delete("long").unwrap();
+    credentials.set("long", &secret).unwrap();
+    assert_eq!(
+        credentials.get("long").unwrap().as_deref(),
+        Some(secret.as_str())
+    );
+    credentials.delete("long").unwrap();
+    assert_eq!(credentials.get("long").unwrap(), None);
+}

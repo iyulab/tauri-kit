@@ -43,6 +43,13 @@ public static class BuildKinds
 /// (the service with <c>.test</c> or <c>.dev</c> for those builds), its user name the account, the secret as UTF-16.
 /// A Rust shell and its .NET backend built the same way therefore share each secret.
 /// </summary>
+/// <remarks>
+/// One entry holds at most 2,560 bytes — 1,280 UTF-16 units — which a signed-in session easily passes. A longer secret
+/// is kept in parts, in the crate's layout: the entry for <c>&lt;account&gt;</c> holds
+/// <c>"\0tauri-kit-credentials/parts=&lt;n&gt;\0"</c> and the first part, the entry for <c>&lt;account&gt;/&lt;i&gt;</c>
+/// part <c>i</c>. Reading joins them, and a missing part is an error rather than a cut secret. A secret that fits is one
+/// entry as before. A secret may therefore not begin with <c>'\0'</c>.
+/// </remarks>
 /// <example>
 /// <code>
 /// var credentials = new Credentials("com.example.app", BuildKinds.Of(typeof(Program).Assembly));
@@ -59,6 +66,12 @@ public sealed class Credentials
     private const int MaxTargetLength = 32767;
     private const int MaxUserNameLength = 513;
 
+    // Long secrets, as the crate keeps them (its «Long secrets» section).
+    private const string PartsMarker = "\0tauri-kit-credentials/parts=";
+    private const int MaxParts = 64;
+
+    private readonly int _partUnits = MaxSecretBytes / 2;
+
     /// <summary>Secrets under <paramref name="service"/> (for example the app's identifier), as seen by this kind of build.</summary>
     public Credentials(string service, BuildKind kind)
     {
@@ -71,6 +84,9 @@ public sealed class Credentials
             _ => throw new ArgumentOutOfRangeException(nameof(kind)),
         };
     }
+
+    /// <summary>Parts of at most <paramref name="partUnits"/> UTF-16 units — for testing the layout with small parts.</summary>
+    internal Credentials(string service, BuildKind kind, int partUnits) : this(service, kind) => _partUnits = partUnits;
 
     /// <summary>The service name entries are actually stored under.</summary>
     public string Service { get; }
@@ -86,9 +102,94 @@ public sealed class Credentials
     }
 
     /// <summary>Stores <paramref name="secret"/> for <paramref name="account"/>, replacing any earlier one (and keeping its user name, alias and comment).</summary>
-    public unsafe void Set(string account, string secret)
+    /// <exception cref="ArgumentException">The secret begins with <c>'\0'</c>, or would take more than 64 entries.</exception>
+    public void Set(string account, string secret)
     {
         ArgumentNullException.ThrowIfNull(secret);
+        if (secret.StartsWith('\0')) throw new ArgumentException("A secret may not begin with a NUL character.", nameof(secret));
+        TargetName(account);
+        var before = PartCount(account);
+        var parts = Split(secret);
+        for (var i = 1; i < parts.Count; i++) WriteEntry(PartAccount(account, i), parts[i]);
+        WriteEntry(account, parts.Count == 1 ? parts[0] : $"{PartsMarker}{parts.Count}\0{parts[0]}");
+        RemoveParts(account, parts.Count, before);
+    }
+
+    /// <summary>The secret stored for <paramref name="account"/>, or <see langword="null"/> when there is none.</summary>
+    /// <exception cref="InvalidDataException">An entry holds bytes that are not UTF-16 text (written by another program), or a part of a long secret is missing.</exception>
+    public string? Get(string account)
+    {
+        var head = ReadEntry(account);
+        if (head is null || ParseHead(head) is not var (count, first)) return head;
+        var secret = new System.Text.StringBuilder(first);
+        for (var i = 1; i < count; i++)
+            secret.Append(ReadEntry(PartAccount(account, i)) ?? throw new InvalidDataException($"Part {i} of {count} of this secret is missing."));
+        return secret.ToString();
+    }
+
+    /// <summary>Whether a secret is stored for <paramref name="account"/>, without handing it out.</summary>
+    public bool Contains(string account) => Get(account) is not null;
+
+    /// <summary>Removes the secret for <paramref name="account"/>. Removing one that is not there is not an error.</summary>
+    public void Delete(string account)
+    {
+        RemoveParts(account, 1, PartCount(account));
+        RemoveEntry(account);
+    }
+
+    private static string PartAccount(string account, int i) => $"{account}/{i}";
+
+    // How many parts the secret now under the account is kept in (1 when it is one entry or none). A first entry whose
+    // marker cannot be read counts as one: writing over it is how it is fixed.
+    private int PartCount(string account)
+    {
+        var head = ReadEntry(account);
+        try
+        {
+            return head is not null && ParseHead(head) is var (count, _) ? count : 1;
+        }
+        catch (InvalidDataException)
+        {
+            return 1;
+        }
+    }
+
+    private void RemoveParts(string account, int from, int to)
+    {
+        for (var i = Math.Max(from, 1); i < to; i++) RemoveEntry(PartAccount(account, i));
+    }
+
+    private static (int Count, string First)? ParseHead(string head)
+    {
+        if (!head.StartsWith(PartsMarker, StringComparison.Ordinal)) return null;
+        var rest = head.AsSpan(PartsMarker.Length);
+        var end = rest.IndexOf('\0');
+        if (end < 0 || !int.TryParse(rest[..end], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var count) || count is < 2 or > MaxParts)
+            throw new InvalidDataException("The first entry's parts marker is malformed.");
+        return (count, rest[(end + 1)..].ToString());
+    }
+
+    // The secret cut into parts that each fit one entry, the first leaving room for the marker (at most two digits).
+    private List<string> Split(string secret)
+    {
+        if (secret.Length <= _partUnits) return [secret];
+        var parts = new List<string>();
+        var room = _partUnits - (PartsMarker.Length + 3);
+        var start = 0;
+        while (start < secret.Length)
+        {
+            var length = Math.Min(room, secret.Length - start);
+            if (start + length < secret.Length && char.IsHighSurrogate(secret[start + length - 1])) length--; // keep a pair whole
+            parts.Add(secret.Substring(start, length));
+            start += length;
+            room = _partUnits;
+        }
+        if (parts.Count > MaxParts) throw new ArgumentException($"The secret is longer than {MaxParts} Credential Manager entries hold.", nameof(secret));
+        return parts;
+    }
+
+    private unsafe void WriteEntry(string account, string secret)
+    {
         var target = TargetName(account);
         var blob = new byte[secret.Length * 2];
         System.Text.Encoding.Unicode.GetBytes(secret, blob); // UTF-16LE, no terminator — as the crate writes it
@@ -133,9 +234,7 @@ public sealed class Credentials
         }
     }
 
-    /// <summary>The secret stored for <paramref name="account"/>, or <see langword="null"/> when there is none.</summary>
-    /// <exception cref="InvalidDataException">The entry holds bytes that are not UTF-16 text (written by another program).</exception>
-    public unsafe string? Get(string account)
+    private unsafe string? ReadEntry(string account)
     {
         var target = TargetName(account);
         if (!Native.CredRead(target, Native.CredTypeGeneric, 0, out var found))
@@ -166,11 +265,7 @@ public sealed class Credentials
         }
     }
 
-    /// <summary>Whether a secret is stored for <paramref name="account"/>, without handing it out.</summary>
-    public bool Contains(string account) => Get(account) is not null;
-
-    /// <summary>Removes the secret for <paramref name="account"/>. Removing one that is not there is not an error.</summary>
-    public void Delete(string account)
+    private void RemoveEntry(string account)
     {
         var target = TargetName(account);
         if (Native.CredDelete(target, Native.CredTypeGeneric, 0)) return;
