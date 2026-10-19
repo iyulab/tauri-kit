@@ -7,6 +7,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-19
+
 ### Added
 
 - `tauri-kit-state`: state for the device, beside the per-folder state. `Settings<T>` reads and writes an
@@ -711,6 +713,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - `tauri-kit-sidecar`: bundled helper processes without a console window, stopped together with
   everything they start, with readiness waits that notice a crash.
 
+[0.23.0]: https://github.com/iyulab/tauri-kit/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/iyulab/tauri-kit/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/iyulab/tauri-kit/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/iyulab/tauri-kit/compare/v0.19.0...v0.20.0
