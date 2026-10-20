@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- `tauri-kit-sidecar` (`loopback-client`): `Client::send(method, path, json)` sends any HTTP method — `PUT`,
+  `DELETE`, `PATCH` and the rest — with the token, an optional JSON body and the client's timeout, so a shell
+  that relays its page's requests to the backend is no longer limited to GET and POST. A name that is not an
+  HTTP method is a `TransportError` and nothing is sent.
+
 ### Fixed
 
 - `TauriKit.Sidecar.Loopback.AspNetCore`: `AddParentProcessWatch` in a web host whose parent is already gone when it

@@ -70,7 +70,13 @@ fn serve() {
             }
             continue;
         }
-        let (status, text) = if authorized {
+        let method = request.split_whitespace().next().unwrap_or("");
+        let (status, text) = if authorized && path == "/method" {
+            (
+                "200 OK",
+                format!("{method} {}", String::from_utf8_lossy(&body)),
+            )
+        } else if authorized {
             (
                 "200 OK",
                 format!("{path} {}", String::from_utf8_lossy(&body)),
@@ -115,6 +121,22 @@ fn requests_carry_the_token_and_statuses_come_back_as_answers() {
     let posted = helper.client().post_json("/items", r#"{"a":1}"#).unwrap();
     assert_eq!(posted.body, r#"/items {"a":1}"#);
     assert!(posted.is_success());
+}
+
+#[test]
+fn any_method_goes_out_as_named_with_the_token_and_its_body() {
+    let helper = Loopback::start(helper("serve"), &options()).unwrap();
+    let client = helper.client();
+    let put = client.send("PUT", "/method", Some(r#"{"a":1}"#)).unwrap();
+    assert_eq!((put.status, put.body.as_str()), (200, r#"PUT {"a":1}"#));
+    let deleted = client.send("DELETE", "/method", None).unwrap();
+    assert_eq!(deleted.body, "DELETE ");
+    let patched = client
+        .within(Duration::from_secs(5))
+        .send("PATCH", "/method", Some("{}"))
+        .unwrap();
+    assert_eq!(patched.body, "PATCH {}");
+    assert!(client.send("NOT A METHOD", "/method", None).is_err());
 }
 
 #[test]

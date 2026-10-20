@@ -406,6 +406,36 @@ impl Client {
         self.read(response)
     }
 
+    /// Sends `method` (`"PUT"`, `"DELETE"`, `"PATCH"`, any HTTP method name) to `path` (starting
+    /// with `/`), with `json` as an `application/json` body when given — what a shell relaying its
+    /// page's requests needs, whatever verb the page used. A name that is not an HTTP method is a
+    /// [`TransportError`]; nothing is sent.
+    pub fn send(
+        &self,
+        method: &str,
+        path: &str,
+        json: Option<&str>,
+    ) -> Result<Response, TransportError> {
+        let method = ureq::http::Method::from_bytes(method.as_bytes())
+            .map_err(|_| TransportError(format!("not an HTTP method: {method:?}")))?;
+        let request = ureq::http::Request::builder()
+            .method(method)
+            .uri(self.url(path))
+            .header("Authorization", &self.authorization);
+        let response = match json {
+            Some(json) => request
+                .header("Content-Type", "application/json")
+                .body(json.to_owned())
+                .map_err(ureq::Error::from)
+                .and_then(|request| self.run(request)),
+            None => request
+                .body(())
+                .map_err(ureq::Error::from)
+                .and_then(|request| self.run(request)),
+        };
+        self.read(response)
+    }
+
     /// GET `path` (starting with `/`) and read the answer as it arrives — an event feed, the shape
     /// a page's `EventSource` opens.
     pub fn get_stream(&self, path: &str) -> Result<Stream, TransportError> {
@@ -433,6 +463,24 @@ impl Client {
         match self.timeout {
             Some(timeout) => request.config().timeout_global(Some(timeout)).build(),
             None => request,
+        }
+    }
+
+    /// Runs an http-crate request with this client's timeout, as [`Client::prepare`] does for a builder.
+    fn run<S: ureq::AsSendBody>(
+        &self,
+        request: ureq::http::Request<S>,
+    ) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
+        match self.timeout {
+            Some(timeout) => {
+                let request = self
+                    .agent
+                    .configure_request(request)
+                    .timeout_global(Some(timeout))
+                    .build();
+                self.agent.run(request)
+            }
+            None => self.agent.run(request),
         }
     }
 
