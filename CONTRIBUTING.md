@@ -51,8 +51,9 @@ declared minimum compiler (`rust-version`).
 
 One commit, `chore: release <version>`, moves every version line together:
 
-1. `version` in the root `Cargo.toml`, and the `tauri-kit-fs` requirement in the crates that depend on it
-   (`crates/diagnostics`, `crates/state`, `crates/update`, `crates/watch`).
+1. `version` in the root `Cargo.toml`, and every requirement one crate here has on another
+   (`grep -rn 'path = "\.\./' crates/*/Cargo.toml` — today `tauri-kit-fs` in `crates/diagnostics`, `crates/state`,
+   `crates/update` and `crates/watch`, and `tauri-kit-state` in `crates/diagnostics`).
 2. `<Version>` in `dotnet/Directory.Build.props`.
 3. The README: the tag in the git-dependency example and, on a minor bump, the `"0.x"` requirements in the
    usage snippet.
