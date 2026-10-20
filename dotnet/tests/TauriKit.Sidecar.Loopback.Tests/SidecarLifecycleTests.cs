@@ -86,6 +86,26 @@ public sealed class SidecarLifecycleTests
     }
 
     [Fact]
+    public async Task A_web_host_whose_parent_is_already_gone_starts_and_then_stops_without_failing()
+    {
+        // Registered before the web host's own service, as an app adds it: the watch starts first.
+        var credentials = new LoopbackCredentials();
+        credentials.Register(Token, "app");
+        var builder = LoopbackHost.CreateSlimBuilder([]);
+        builder.Services.AddLoopbackAuthentication(credentials);
+        builder.Services.AddHostedService(provider => new ParentProcessWatch(12345, provider.GetRequiredService<IHostApplicationLifetime>(), _ => null));
+        await using var app = builder.Build();
+        var started = false;
+        app.Lifetime.ApplicationStarted.Register(() => started = true);
+        using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        await app.RunAsync(limit.Token);
+
+        Assert.True(started, "the server started before it stopped");
+        Assert.False(limit.IsCancellationRequested, "it stopped on its own");
+    }
+
+    [Fact]
     public void A_process_that_started_after_this_one_is_not_its_parent()
     {
         using var later = LongRunning();

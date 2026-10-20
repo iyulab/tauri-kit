@@ -39,7 +39,7 @@ public static class SidecarLifecycle
 
     /// <summary>
     /// Stops the application when the process with id <paramref name="parentProcessId"/> — the app that
-    /// started this sidecar — exits, or at once when it is already gone. How the id arrives (an argument,
+    /// started this sidecar — exits, or, when it is already gone, as soon as the host has started. How the id arrives (an argument,
     /// an environment variable) is the app's. A process with that id that started after this one is not
     /// the parent but a later process that was given its id, and counts as gone.
     /// </summary>
@@ -69,7 +69,10 @@ internal sealed class ParentProcessWatch(int parentProcessId, IHostApplicationLi
             }
         }
 
-        if (!stoppingToken.IsCancellationRequested) lifetime.StopApplication();
+        // Not before the host has started: a parent gone already is found while the host is still starting its
+        // services — the server among them — and stopping then cancels that start, which fails the host instead of
+        // stopping it. Once started (at once, if it already has), it stops as asked.
+        if (!stoppingToken.IsCancellationRequested) lifetime.ApplicationStarted.Register(lifetime.StopApplication);
     }
 
     /// <summary>The parent, or <c>null</c> when it is gone — no process has the id, or the one that has it

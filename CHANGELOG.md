@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Fixed
+
+- `TauriKit.Sidecar.Loopback.AspNetCore`: `AddParentProcessWatch` in a web host whose parent is already gone when it
+  starts no longer fails the host. The watch stopped the application while the host was still starting its services,
+  which cancelled the server's start and ended the process with an unhandled exception; it now stops it once the host
+  has started.
+
 ## [0.23.0] - 2026-10-19
 
 ### Added
