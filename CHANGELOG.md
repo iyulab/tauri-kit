@@ -13,6 +13,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   starts no longer fails the host. The watch stopped the application while the host was still starting its services,
   which cancelled the server's start and ended the process with an unhandled exception; it now stops it once the host
   has started.
+- `tauri-kit-update`: `nsis/wait-for-exit.nsh` showed including it as `!include "wait-for-exit.nsh"`, which makensis
+  cannot find from the installer script Tauri generates in its build folder; it now shows
+  `!include "${__FILEDIR__}\wait-for-exit.nsh"`, the hooks file's own folder. The macro itself is unchanged.
 
 ## [0.23.0] - 2026-10-19
 

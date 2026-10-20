@@ -14,12 +14,15 @@
 ;
 ; Use: copy this file next to the app's installer hooks file, and in that file
 ;
-;   !include "wait-for-exit.nsh"
+;   !include "${__FILEDIR__}\wait-for-exit.nsh"
 ;   !macro NSIS_HOOK_PREINSTALL
 ;     !insertmacro TAURI_KIT_WAIT_FOR_EXIT "sidecar\helper.exe"   ; "" when there is no helper
 ;   !macroend
 ;
-; The path is relative to the install folder. The app still stops its helpers itself before it starts the
+; `${__FILEDIR__}` is the hooks file's own folder: makensis looks for an included file from the installer
+; script Tauri generates in its build folder, so a bare "wait-for-exit.nsh" is not found.
+;
+; The helper's path is relative to the install folder. The app still stops its helpers itself before it starts the
 ; installer (tauri-kit-update's `before_install`); this covers the time the operating system takes to let
 ; the files go.
 
