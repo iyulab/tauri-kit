@@ -16,6 +16,10 @@ categories = ["os"]
 loopback = ["dep:getrandom", "dep:serde", "dep:serde_json"]
 # A blocking client for it, for an app with no HTTP client of its own.
 loopback-client = ["loopback", "dep:ureq"]
+# A client of a supervisor's local pipe — a named pipe on Windows, a Unix socket elsewhere — speaking one
+# JSON object per line: requests that carry an id, and events the supervisor pushes. For a shell whose
+# backend is started and kept by another process.
+pipe = ["dep:serde_json"]
 
 [dependencies]
 getrandom = { version = "0.4", optional = true }
@@ -29,6 +33,16 @@ windows-sys = { version = "0.61", features = [
     "Win32_Security",
     "Win32_System_JobObjects",
     "Win32_System_Threading",
+] }
+
+[target.'cfg(windows)'.dev-dependencies]
+# The pipe tests run a supervisor's named pipe in-process.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
 ] }
 
 [target.'cfg(unix)'.dependencies]

@@ -49,6 +49,8 @@
 
 #[cfg(feature = "loopback")]
 pub mod loopback;
+#[cfg(feature = "pipe")]
+pub mod pipe;
 pub mod supervise;
 
 use std::fs::File;

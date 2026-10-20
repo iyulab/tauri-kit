@@ -7,6 +7,17 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- `tauri-kit-sidecar` (`pipe` feature): a client of a supervisor's local pipe, for a shell whose backend is started and kept
+  by another process rather than by the shell. One JSON object per line over a named pipe (Windows) or a Unix socket:
+  `PipeClient::request(cmd, fields)` sends a line carrying a fresh `id` on a connection of its own and returns the line
+  that echoes it (pushed lines before it are skipped; a deadline that passes is `TimedOut` on every platform), and
+  `PipeClient::events(retry, on_signal)` reads the supervisor's pushed lines on one held connection, reporting
+  `Connected`, each `Event` and `Disconnected`, and connecting again with a back-off until stopped. `PipeAddress::dotnet(name)`
+  is where a .NET `NamedPipeServerStream` of that name listens on each platform. The pipe name, commands, fields and event
+  shapes are the caller's. A supervisor must accept more than one connection.
+
 ## [0.24.0] - 2026-10-20
 
 ### Added
