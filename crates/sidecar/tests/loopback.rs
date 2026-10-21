@@ -398,3 +398,74 @@ fn a_stream_whose_answer_never_starts_gives_up_after_the_request_timeout() {
     assert!(opened.is_err());
     assert!(started.elapsed() < Duration::from_secs(3));
 }
+
+/// A backend in this process that answers one request with the request's own headers as its body
+/// (one `name: value` line each, lower-cased) and a `Session-Id: s-1` header.
+fn header_echo() -> Client {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = Endpoint::new(
+        listener.local_addr().unwrap().port(),
+        Token::generate().unwrap(),
+    );
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut request = String::new();
+        reader.read_line(&mut request).unwrap();
+        let mut seen = String::new();
+        loop {
+            let mut header = String::new();
+            reader.read_line(&mut header).unwrap();
+            let header = header.trim_end();
+            if header.is_empty() {
+                break;
+            }
+            seen.push_str(&header.to_ascii_lowercase());
+            seen.push('\n');
+        }
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nSession-Id: s-1\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{seen}",
+            seen.len()
+        )
+        .unwrap();
+    });
+    Client::new(&endpoint, &ClientOptions::default())
+}
+
+#[test]
+fn headers_go_out_with_the_request_and_come_back_with_the_answer() {
+    let answer = header_echo()
+        .send_with_headers(
+            "POST",
+            "/rpc",
+            Some("{}"),
+            &[
+                ("Accept", "application/json, text/event-stream"),
+                ("Session-Id", "s-0"),
+            ],
+        )
+        .unwrap();
+    assert!(answer
+        .body
+        .contains("accept: application/json, text/event-stream\n"));
+    assert!(answer.body.contains("session-id: s-0\n"));
+    assert!(answer.body.contains("authorization: bearer "));
+    assert_eq!(answer.header("session-id"), Some("s-1"));
+    assert_eq!(answer.header("SESSION-ID"), Some("s-1"));
+    assert_eq!(answer.header("x-absent"), None);
+}
+
+#[test]
+fn a_caller_cannot_replace_the_token_or_send_a_malformed_header() {
+    let client = header_echo();
+    assert!(client
+        .send_with_headers("GET", "/x", None, &[("authorization", "Bearer other")])
+        .is_err());
+    assert!(client
+        .send_with_headers("GET", "/x", None, &[("bad name", "v")])
+        .is_err());
+    assert!(client
+        .send_with_headers("GET", "/x", None, &[("x-ok", "line\nbreak")])
+        .is_err());
+}

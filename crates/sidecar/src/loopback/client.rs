@@ -34,15 +34,26 @@ impl Default for ClientOptions {
     }
 }
 
-/// An answer from the backend: its status and its body as text. A status outside 2xx is an answer
-/// like any other, for the app to read.
+/// An answer from the backend: its status, its headers and its body as text. A status outside 2xx
+/// is an answer like any other, for the app to read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response {
     pub status: u16,
+    /// Every header the backend sent, in order, as `(name, value)` — names as sent; a value that is
+    /// not valid UTF-8 is left out. [`Response::header`] looks one up.
+    pub headers: Vec<(String, String)>,
     pub body: String,
 }
 
 impl Response {
+    /// The first value of the header `name`, compared without regard to case.
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+
     /// Whether the status is 2xx.
     pub fn is_success(&self) -> bool {
         (200..300).contains(&self.status)
@@ -422,12 +433,39 @@ impl Client {
         path: &str,
         json: Option<&str>,
     ) -> Result<Response, TransportError> {
+        self.send_with_headers(method, path, json, &[])
+    }
+
+    /// As [`Client::send`], with `headers` added to the request — a protocol over HTTP that carries
+    /// its own headers both ways (a session id the backend hands out and expects back, an `Accept`
+    /// list); the answer's headers are in [`Response::headers`]. `Authorization` is the client's own:
+    /// a header of that name, or a name or value HTTP does not allow, is a [`TransportError`] and
+    /// nothing is sent.
+    pub fn send_with_headers(
+        &self,
+        method: &str,
+        path: &str,
+        json: Option<&str>,
+        headers: &[(&str, &str)],
+    ) -> Result<Response, TransportError> {
         let method = ureq::http::Method::from_bytes(method.as_bytes())
             .map_err(|_| TransportError(format!("not an HTTP method: {method:?}")))?;
-        let request = ureq::http::Request::builder()
+        let mut request = ureq::http::Request::builder()
             .method(method)
             .uri(self.url(path))
             .header("Authorization", &self.authorization);
+        for (name, value) in headers {
+            if name.eq_ignore_ascii_case("authorization") {
+                return Err(TransportError(
+                    "the Authorization header is the client's own".to_owned(),
+                ));
+            }
+            let name = ureq::http::HeaderName::from_bytes(name.as_bytes())
+                .map_err(|_| TransportError(format!("not a header name: {name:?}")))?;
+            let value = ureq::http::HeaderValue::from_str(value)
+                .map_err(|_| TransportError(format!("not a header value for {name}")))?;
+            request = request.header(name, value);
+        }
         let response = match json {
             Some(json) => request
                 .header("Content-Type", "application/json")
@@ -542,13 +580,24 @@ impl Client {
     ) -> Result<Response, TransportError> {
         let mut response = response.map_err(|e| TransportError(e.to_string()))?;
         let status = response.status().as_u16();
+        let headers = response
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| {
+                Some((name.as_str().to_owned(), value.to_str().ok()?.to_owned()))
+            })
+            .collect();
         let body = response
             .body_mut()
             .with_config()
             .limit(self.body_limit)
             .read_to_string()
             .map_err(|e| TransportError(e.to_string()))?;
-        Ok(Response { status, body })
+        Ok(Response {
+            status,
+            headers,
+            body,
+        })
     }
 }
 
@@ -560,6 +609,7 @@ mod tests {
     fn a_failed_answer_says_what_failed() {
         let failed = Response {
             status: 500,
+            headers: Vec::new(),
             body: r#"{"fault":{"type":"System.IO.IOException","at":"App.Store.Read","frames":["App.Store.Read","App.Api.Get"]}}"#.into(),
         };
         assert_eq!(

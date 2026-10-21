@@ -17,6 +17,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   `Connected`, each `Event` and `Disconnected`, and connecting again with a back-off until stopped. `PipeAddress::dotnet(name)`
   is where a .NET `NamedPipeServerStream` of that name listens on each platform. The pipe name, commands, fields and event
   shapes are the caller's. A supervisor must accept more than one connection.
+- `tauri-kit-sidecar` (`loopback-client`): `Client::send_with_headers(method, path, json, headers)` sends a request with
+  headers of the caller's — for a protocol over HTTP that carries its own both ways, such as a session id the backend hands
+  out and expects back, or an `Accept` list — and `Response::headers` / `Response::header(name)` give the answer's. The
+  `Authorization` header stays the client's: a header of that name, or a name or value HTTP does not allow, is a
+  `TransportError` and nothing is sent.
+
+### Changed
+
+- `tauri-kit-sidecar` (`loopback-client`): `Response` has a `headers` field. Code that builds a `Response` itself (a test
+  double) adds `headers: Vec::new()`.
 
 ### Fixed
 
