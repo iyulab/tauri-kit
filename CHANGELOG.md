@@ -18,6 +18,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   is where a .NET `NamedPipeServerStream` of that name listens on each platform. The pipe name, commands, fields and event
   shapes are the caller's. A supervisor must accept more than one connection.
 
+### Security
+
+- The workspace lockfile moves `rustls-webpki` to 0.103.16 and `webpki-roots` / `webpki-root-certs` to 1.0.10
+  (RUSTSEC-2026-0381, -0382, -0383: distrusted intermediates could be accepted). Only the repository's own builds and tests
+  read this lockfile; an application resolves these crates in its own lockfile.
+
 ## [0.24.0] - 2026-10-20
 
 ### Added
