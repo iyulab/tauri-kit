@@ -3,7 +3,7 @@
 #![cfg(feature = "loopback-client")]
 
 use std::io::{BufRead, BufReader, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::process::Command;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -30,6 +30,48 @@ fn child() {
     }
 }
 
+/// One request as a test backend read it: the request line, the headers (names lower-cased), and the
+/// body. The body is read too, always — a server that answers and closes with request bytes still
+/// unread makes Windows reset the connection, and the client sees the reset instead of the answer.
+struct Request {
+    line: String,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
+
+impl Request {
+    fn header(&self, name: &str) -> Option<&String> {
+        self.headers.iter().find(|(n, _)| n == name).map(|(_, v)| v)
+    }
+}
+
+fn read_request(reader: &mut BufReader<TcpStream>) -> Request {
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap();
+    let mut headers = Vec::new();
+    loop {
+        let mut header = String::new();
+        reader.read_line(&mut header).unwrap();
+        let header = header.trim_end();
+        if header.is_empty() {
+            break;
+        }
+        let (name, value) = header.split_once(':').unwrap();
+        headers.push((name.to_ascii_lowercase(), value.trim().to_string()));
+    }
+    let mut request = Request {
+        line,
+        headers,
+        body: Vec::new(),
+    };
+    let length = request
+        .header("content-length")
+        .map_or(0, |n| n.parse().unwrap());
+    request.body = vec![0; length];
+    std::io::Read::read_exact(reader, &mut request.body).unwrap();
+    request
+}
+
 /// Answers each request with its path, or 401 when it lacks the token.
 fn serve() {
     let token = std::env::var(TOKEN_ENV).unwrap();
@@ -38,26 +80,9 @@ fn serve() {
     for stream in listener.incoming() {
         let mut stream = stream.unwrap();
         let mut reader = BufReader::new(stream.try_clone().unwrap());
-        let mut request = String::new();
-        reader.read_line(&mut request).unwrap();
-        let (mut authorized, mut length) = (false, 0usize);
-        loop {
-            let mut header = String::new();
-            reader.read_line(&mut header).unwrap();
-            let header = header.trim_end();
-            if header.is_empty() {
-                break;
-            }
-            let (name, value) = header.split_once(':').unwrap();
-            match name.to_ascii_lowercase().as_str() {
-                "authorization" => authorized = value.trim() == format!("Bearer {token}"),
-                "content-length" => length = value.trim().parse().unwrap(),
-                _ => {}
-            }
-        }
-        let mut body = vec![0; length];
-        std::io::Read::read_exact(&mut reader, &mut body).unwrap();
-        let path = request.split_whitespace().nth(1).unwrap_or("");
+        let request = read_request(&mut reader);
+        let authorized = request.header("authorization") == Some(&format!("Bearer {token}"));
+        let path = request.line.split_whitespace().nth(1).unwrap_or("");
         if authorized && path == "/slow" {
             std::thread::sleep(Duration::from_secs(3));
         }
@@ -70,16 +95,16 @@ fn serve() {
             }
             continue;
         }
-        let method = request.split_whitespace().next().unwrap_or("");
+        let method = request.line.split_whitespace().next().unwrap_or("");
         let (status, text) = if authorized && path == "/method" {
             (
                 "200 OK",
-                format!("{method} {}", String::from_utf8_lossy(&body)),
+                format!("{method} {}", String::from_utf8_lossy(&request.body)),
             )
         } else if authorized {
             (
                 "200 OK",
-                format!("{path} {}", String::from_utf8_lossy(&body)),
+                format!("{path} {}", String::from_utf8_lossy(&request.body)),
             )
         } else {
             ("401 Unauthorized", String::new())
@@ -202,15 +227,7 @@ fn quiet_feed() -> (Client, mpsc::Receiver<(String, Instant)>) {
     std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
         let mut reader = BufReader::new(stream.try_clone().unwrap());
-        let mut request = String::new();
-        reader.read_line(&mut request).unwrap();
-        loop {
-            let mut header = String::new();
-            reader.read_line(&mut header).unwrap();
-            if header.trim_end().is_empty() {
-                break;
-            }
-        }
+        let request = read_request(&mut reader).line;
         write!(
             stream,
             "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ntransfer-encoding: chunked\r\n\r\n"
@@ -351,14 +368,7 @@ fn paced_feed(head_delay: Duration, events: usize, gap: Duration) -> Client {
     );
     std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
-        let mut reader = BufReader::new(stream.try_clone().unwrap());
-        loop {
-            let mut header = String::new();
-            reader.read_line(&mut header).unwrap();
-            if header.trim_end().is_empty() {
-                break;
-            }
-        }
+        read_request(&mut BufReader::new(stream.try_clone().unwrap()));
         std::thread::sleep(head_delay);
         let _ = write!(
             stream,
@@ -409,20 +419,12 @@ fn header_echo() -> Client {
     );
     std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
-        let mut reader = BufReader::new(stream.try_clone().unwrap());
-        let mut request = String::new();
-        reader.read_line(&mut request).unwrap();
-        let mut seen = String::new();
-        loop {
-            let mut header = String::new();
-            reader.read_line(&mut header).unwrap();
-            let header = header.trim_end();
-            if header.is_empty() {
-                break;
-            }
-            seen.push_str(&header.to_ascii_lowercase());
-            seen.push('\n');
-        }
+        let request = read_request(&mut BufReader::new(stream.try_clone().unwrap()));
+        let seen: String = request
+            .headers
+            .iter()
+            .map(|(name, value)| format!("{name}: {}\n", value.to_ascii_lowercase()))
+            .collect();
         write!(
             stream,
             "HTTP/1.1 200 OK\r\nSession-Id: s-1\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{seen}",
