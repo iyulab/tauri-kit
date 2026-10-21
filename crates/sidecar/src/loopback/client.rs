@@ -16,7 +16,10 @@ use super::{Endpoint, Fault, Problem};
 /// How a [`Client`] behaves.
 #[derive(Debug, Clone)]
 pub struct ClientOptions {
-    /// How long one request may take, from connecting to the last byte. Default 120 seconds.
+    /// How long one request may take, from connecting to the last byte. Default 120 seconds. A
+    /// streamed answer ([`Client::get_stream`], [`Client::post_json_stream`]) is held to it until
+    /// its status and headers arrive; reading its body has no deadline — close it with
+    /// [`Stream::closer`].
     pub request_timeout: Duration,
     /// The most bytes of a response body read. Default 256 MiB.
     pub body_limit: u64,
@@ -342,6 +345,7 @@ pub struct Client {
     base: String,
     authorization: String,
     body_limit: u64,
+    request_timeout: Duration,
     timeout: Option<Duration>,
 }
 
@@ -367,12 +371,14 @@ impl Client {
             base: endpoint.base(),
             authorization: endpoint.authorization(),
             body_limit: options.body_limit,
+            request_timeout: options.request_timeout,
             timeout: None,
         }
     }
 
     /// The same client, giving up on each request after `timeout` instead of
-    /// [`ClientOptions::request_timeout`] — a quick health check, or a long streamed answer.
+    /// [`ClientOptions::request_timeout`] — a quick health check, or a backend slow to start a
+    /// streamed answer (for a stream it bounds the wait for the status and headers only).
     pub fn within(&self, timeout: Duration) -> Client {
         Client {
             timeout: Some(timeout),
@@ -440,7 +446,7 @@ impl Client {
     /// a page's `EventSource` opens.
     pub fn get_stream(&self, path: &str) -> Result<Stream, TransportError> {
         let (agent, connection) = self.stream_agent();
-        let response = self.prepare(agent.get(self.url(path))).call();
+        let response = self.prepare_stream(agent.get(self.url(path))).call();
         self.stream(response, connection)
     }
 
@@ -448,7 +454,7 @@ impl Client {
     pub fn post_json_stream(&self, path: &str, json: &str) -> Result<Stream, TransportError> {
         let (agent, connection) = self.stream_agent();
         let response = self
-            .prepare(agent.post(self.url(path)))
+            .prepare_stream(agent.post(self.url(path)))
             .content_type("application/json")
             .send(json);
         self.stream(response, connection)
@@ -464,6 +470,22 @@ impl Client {
             Some(timeout) => request.config().timeout_global(Some(timeout)).build(),
             None => request,
         }
+    }
+
+    /// As [`Client::prepare`], for a streamed answer: the timeout holds until the status and headers
+    /// arrive, and reading the body has none — an event feed stays quiet for as long as it likes, and
+    /// a long answer (a model's reply, a download's progress) is read to its end.
+    fn prepare_stream<B>(&self, request: ureq::RequestBuilder<B>) -> ureq::RequestBuilder<B> {
+        let timeout = Some(self.timeout.unwrap_or(self.request_timeout));
+        request
+            .header("Authorization", &self.authorization)
+            .config()
+            .timeout_global(None)
+            .timeout_connect(timeout)
+            .timeout_send_request(timeout)
+            .timeout_send_body(timeout)
+            .timeout_recv_response(timeout)
+            .build()
     }
 
     /// Runs an http-crate request with this client's timeout, as [`Client::prepare`] does for a builder.

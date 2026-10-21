@@ -18,6 +18,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   is where a .NET `NamedPipeServerStream` of that name listens on each platform. The pipe name, commands, fields and event
   shapes are the caller's. A supervisor must accept more than one connection.
 
+### Fixed
+
+- `tauri-kit-sidecar` (`loopback-client`): a streamed answer (`Client::get_stream`, `Client::post_json_stream`) is no
+  longer cut off when the client's request timeout passes while it is still being read. The timeout covered the whole
+  exchange, body included, so an event feed held open for longer than it (120 seconds by default) or a long answer — a
+  model's reply, a download's progress — ended with `timeout: global` mid-way. The timeout now holds until the status and
+  headers arrive; reading the body has no deadline and the stream is ended with `Stream::closer`. `Client::within` bounds
+  the same wait for a stream.
+
 ### Security
 
 - The workspace lockfile moves `rustls-webpki` to 0.103.16 and `webpki-roots` / `webpki-root-certs` to 1.0.10

@@ -340,3 +340,61 @@ fn no_readiness_line_in_time_is_reported() {
         other => panic!("expected TimedOut, got {:?}", other.err()),
     }
 }
+
+/// A backend in this process that answers one streamed request: after `head_delay`, the status
+/// and headers, then `events` events `gap` apart, then the end of the body.
+fn paced_feed(head_delay: Duration, events: usize, gap: Duration) -> Client {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = Endpoint::new(
+        listener.local_addr().unwrap().port(),
+        Token::generate().unwrap(),
+    );
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        loop {
+            let mut header = String::new();
+            reader.read_line(&mut header).unwrap();
+            if header.trim_end().is_empty() {
+                break;
+            }
+        }
+        std::thread::sleep(head_delay);
+        let _ = write!(
+            stream,
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ntransfer-encoding: chunked\r\n\r\n"
+        );
+        for _ in 0..events {
+            let _ = write!(stream, "9\r\ndata: 1\n\n\r\n");
+            let _ = stream.flush();
+            std::thread::sleep(gap);
+        }
+        let _ = write!(stream, "0\r\n\r\n");
+    });
+    let options = ClientOptions {
+        request_timeout: Duration::from_millis(500),
+        ..ClientOptions::default()
+    };
+    Client::new(&endpoint, &options)
+}
+
+#[test]
+fn a_stream_that_outlasts_the_request_timeout_is_read_to_its_end() {
+    let stream = paced_feed(Duration::ZERO, 6, Duration::from_millis(250))
+        .get_stream("/events")
+        .unwrap();
+    let events: Vec<String> = stream
+        .lines()
+        .map(Result::unwrap)
+        .filter(|l| !l.is_empty())
+        .collect();
+    assert_eq!(events.len(), 6);
+}
+
+#[test]
+fn a_stream_whose_answer_never_starts_gives_up_after_the_request_timeout() {
+    let started = Instant::now();
+    let opened = paced_feed(Duration::from_secs(5), 1, Duration::ZERO).get_stream("/events");
+    assert!(opened.is_err());
+    assert!(started.elapsed() < Duration::from_secs(3));
+}
