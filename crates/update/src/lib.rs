@@ -35,6 +35,10 @@
 //!   means. [`Event::Found`] and [`Status`] carry it; how to tell the person (a fix quietly, a feature
 //!   with a word) is the app's.
 //!
+//! A source that downloads an installer itself checks who signed it before handing it on:
+//! [`verify::authenticode`] (feature `authenticode`) compares the signer with an [`verify::Expect`] —
+//! subject, issuer, thumbprint — rather than the display name alone.
+//!
 //! On Windows the installer also has to wait for the closing app and its helpers to let go of their
 //! files. The crate's `nsis/wait-for-exit.nsh` is an installer hook that does — see that file.
 //!
@@ -82,6 +86,9 @@
 //! `block_on` is safe there because the methods run on this crate's own thread, never on the
 //! runtime's. A source with its own installer files implements [`Source::restore`] and
 //! [`Source::forget`] too.
+
+#[cfg(feature = "authenticode")]
+pub mod verify;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};

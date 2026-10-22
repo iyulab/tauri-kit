@@ -7,6 +7,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- `tauri-kit-update` (`authenticode` feature): `verify::authenticode(path, &Expect)` checks that a downloaded installer
+  carries a valid Authenticode signature (a chain Windows trusts, revocation not asked so an offline network does not block
+  updates) and that its signer is the expected one — by subject, issuer and thumbprint (SHA-1 or SHA-256), each a list of
+  accepted values, rather than by display name alone, which any similarly named certificate passes. An expectation that
+  names nothing is refused. It answers the signer it found (`Signer`) or why the file was refused (`Refused`). Windows;
+  elsewhere every file is refused with `Refused::Unsupported`.
+
 ## [0.26.0] - 2026-10-23
 
 ### Added

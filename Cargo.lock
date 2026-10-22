@@ -1569,6 +1569,7 @@ dependencies = [
  "serde_json",
  "tauri-kit-fs",
  "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
