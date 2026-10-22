@@ -133,28 +133,28 @@ mod tests {
 
     #[test]
     fn onedrive_copies_of_named_devices() {
-        let devices = ["iyunb02", "UJ-Book3"];
+        let devices = ["desk-02", "Laptop-3"];
         // OneDrive names the copy after the computer whose change lost, as it spells it.
         assert_eq!(
-            conflict_copy_of_on("접수-1-iyunb02.md", &devices).as_deref(),
+            conflict_copy_of_on("접수-1-desk-02.md", &devices).as_deref(),
             Some("접수-1.md")
         );
         assert_eq!(
-            conflict_copy_of_on("접수-1-UJ-BOOK3.md", &devices).as_deref(),
+            conflict_copy_of_on("접수-1-LAPTOP-3.md", &devices).as_deref(),
             Some("접수-1.md"),
             "a device name is compared without regard to case"
         );
         assert_eq!(
-            conflict_copy_of_on("회의.fd-iyunb02.md", &devices).as_deref(),
+            conflict_copy_of_on("회의.fd-desk-02.md", &devices).as_deref(),
             Some("회의.fd.md"),
             "the marker goes before the last extension"
         );
         // A name that only looks like one: another device, no device at all, or nothing before it.
         assert_eq!(conflict_copy_of_on("회의-서울.md", &devices), None);
         assert_eq!(conflict_copy_of_on("접수-1.md", &devices), None);
-        assert_eq!(conflict_copy_of_on("-iyunb02.md", &devices), None);
-        assert_eq!(conflict_copy_of_on("접수-1-iyunb02.md", &[]), None);
-        assert_eq!(conflict_copy_of_on("접수-1-iyunb02.md", &[" "]), None);
+        assert_eq!(conflict_copy_of_on("-desk-02.md", &devices), None);
+        assert_eq!(conflict_copy_of_on("접수-1-desk-02.md", &[]), None);
+        assert_eq!(conflict_copy_of_on("접수-1-desk-02.md", &[" "]), None);
         // The other clients' copies are recognised as they are without devices.
         assert_eq!(
             conflict_copy_of_on("a (conflicted copy 2026-09-29 143015).txt", &devices).as_deref(),
