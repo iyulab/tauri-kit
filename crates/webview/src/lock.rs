@@ -378,7 +378,7 @@ pub fn lock_navigation(
     use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::rc::Rc;
     use webview2_com::Microsoft::Web::WebView2::Win32::{
-        ICoreWebView2_18, ICoreWebView2_2, ICoreWebView2_22,
+        ICoreWebView2_18, ICoreWebView2_2, ICoreWebView2_22, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
         COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT,
         COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_DOCUMENT,
     };
@@ -438,7 +438,11 @@ pub fn lock_navigation(
     unsafe { core.add_FrameNavigationStarting(&handler, &mut token)? };
 
     // The request: an empty 403 for a refused document, before it leaves. Reported from the
-    // navigation events above, not here.
+    // navigation events above, not here. The runtime raises this event for every request that matches
+    // *any* filter on the web view — a framework's own custom-protocol filters cover scripts, fetches
+    // and CORS preflights too — so only a document request is judged here: answering anything else
+    // would refuse the app's own calls to a scheme it serves (a preflight answered with a bare 403
+    // fails its CORS check).
     let environment = unsafe { core.cast::<ICoreWebView2_2>()?.Environment()? };
     let every = CoTaskMemPWSTR::from("*");
     let frame_requests = match core.cast::<ICoreWebView2_22>() {
@@ -463,6 +467,11 @@ pub fn lock_navigation(
     let requests = lock.clone();
     let handler = WebResourceRequestedEventHandler::create(Box::new(move |_, args| {
         let Some(args) = args else { return Ok(()) };
+        let mut context = COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL;
+        unsafe { args.ResourceContext(&mut context)? };
+        if context != COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT {
+            return Ok(());
+        }
         let mut uri = PWSTR::null();
         let uri = unsafe {
             args.Request()?.Uri(&mut uri)?;

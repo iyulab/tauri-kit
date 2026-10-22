@@ -7,6 +7,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Fixed
+
+- `tauri-kit-webview`: `lock_navigation` (Windows) answered every request it saw outside the allowed origins with a bare
+  403, not only documents. WebView2 raises `WebResourceRequested` for any request matching any filter on the web view, and
+  a framework that serves its own custom protocols registers filters for all resource kinds — so the lock also refused the
+  app's scripts, fetches and CORS preflights to such a scheme. A Tauri app's IPC is one: every `invoke` preflight to
+  `http://ipc.localhost` failed its CORS check (a 403 with no `Access-Control-Allow-Origin`), and Tauri fell back to its
+  postMessage interface for the rest of the session, after about two dozen failed calls at every start. The lock now judges
+  document requests only (the window's and its frames'); navigation is refused exactly as before.
+
 ## [0.27.0] - 2026-10-23
 
 ### Added
