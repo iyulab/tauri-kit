@@ -9,6 +9,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ### Added
 
+- `tauri-kit-webview`: `context_menu::add_page_item(webview, label, on_pick)` puts an item of the app's own at the top
+  of the menu the web view shows for the page itself — right-clicked where there is no selection, link, picture, video or
+  field to type in — for what acts on the whole page. Windows: `ContextMenuRequested` with a page target that has no
+  selection, link or editable field; macOS: the menu with the page's Reload entry and none that a selection, a link, a
+  picture or a field adds. A web view may have both a selection item and a page item.
 - `tauri-kit-update`: `github::Releases` — releases published on GitHub as the place to look. `latest(fetch, channel)`
   reads the newest version: on the stable channel from the `…/releases/latest` redirect (one request, no API call and so
   no API rate limit, pre-releases and drafts skipped), on the beta channel from the API's release list (the highest
