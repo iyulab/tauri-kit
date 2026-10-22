@@ -27,6 +27,11 @@
 //!   Windows the `notify` 8 release this crate builds on does not pass an overflow on: the batch is
 //!   dropped, or the watch stops, and nothing is reported. [`Watch::probe_liveness`] catches a
 //!   watch that stopped.
+//! - **Swept, where the platform is silent**: some files arrive with no notification at all — on
+//!   Windows, a file a cloud sync client (OneDrive and others built on the Cloud Files API) brings
+//!   down from another device appears as a placeholder, and creating one notifies nothing.
+//!   [`Watch::sweep_every`] lists the watched tree again on an interval and reports a file that
+//!   arrived or left without a word, the same way as one that was announced.
 //!
 //! ```no_run
 //! use tauri_kit_watch::{Notice, OwnWrites, Watch};
@@ -103,6 +108,7 @@ pub struct Watch {
     rescan_on: Option<PathRule>,
     own: Option<OwnWrites>,
     probe: Option<(PathBuf, Duration)>,
+    sweep: Option<Duration>,
 }
 
 impl fmt::Debug for Watch {
@@ -115,6 +121,7 @@ impl fmt::Debug for Watch {
             .field("rescan_on", &self.rescan_on.is_some())
             .field("own_writes", &self.own.is_some())
             .field("probe", &self.probe)
+            .field("sweep", &self.sweep)
             .finish()
     }
 }
@@ -130,6 +137,7 @@ impl Watch {
             rescan_on: None,
             own: None,
             probe: None,
+            sweep: None,
         }
     }
 
@@ -201,6 +209,23 @@ impl Watch {
         self
     }
 
+    /// Lists the watched tree again every `every` and reports a file that arrived or left without a
+    /// notification, as [`ChangeKind::Written`] or [`ChangeKind::Removed`] — and a folder that arrived
+    /// whole, its files. It is for a folder whose changes can come with no notification at all: on
+    /// Windows, a cloud sync client (OneDrive and others built on the Cloud Files API) brings a file made
+    /// on another device down as a placeholder, and creating a placeholder notifies nothing, so without
+    /// a sweep the file is not heard of until something else touches its folder. A change to a file's
+    /// content is still heard through notifications; a sweep compares names only.
+    ///
+    /// A sweep reads every watched folder, which costs a moment for a large tree — seconds to tens of
+    /// seconds suit an app. `every` must be longer than twice the debounce window, so a file being
+    /// written is announced before a sweep finds it. The app's own writes and ignored files are left
+    /// out as they are from any batch.
+    pub fn sweep_every(mut self, every: Duration) -> Self {
+        self.sweep = Some(every);
+        self
+    }
+
     /// Starts watching. `on_notice` runs on the watcher's own thread, once per batch.
     ///
     /// The watched tree is listed once before watching starts, which takes a moment for a large
@@ -236,6 +261,12 @@ impl Watch {
                 ));
             }
         }
+        if self.sweep.is_some_and(|every| every <= self.debounce * 2) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the sweep interval must be longer than twice the debounce window",
+            ));
+        }
         let inner = Arc::new(Mutex::new(Some(shared.watch()?)));
         let probe = match self.probe {
             Some((folder, every)) => Some(Probe::start(
@@ -246,7 +277,16 @@ impl Watch {
             )?),
             None => None,
         };
-        Ok(Watcher { root, inner, probe })
+        let sweep = match self.sweep {
+            Some(every) => Some(Sweep::start(Arc::clone(&shared), every)?),
+            None => None,
+        };
+        Ok(Watcher {
+            root,
+            inner,
+            probe,
+            sweep,
+        })
     }
 }
 
@@ -388,6 +428,7 @@ pub struct Watcher {
     root: PathBuf,
     inner: Arc<Mutex<Option<PlatformWatch>>>,
     probe: Option<Probe>,
+    sweep: Option<Sweep>,
 }
 
 impl fmt::Debug for Watcher {
@@ -395,6 +436,7 @@ impl fmt::Debug for Watcher {
         f.debug_struct("Watcher")
             .field("root", &self.root)
             .field("probe", &self.probe.is_some())
+            .field("sweep", &self.sweep.is_some())
             .finish()
     }
 }
@@ -410,6 +452,7 @@ impl Drop for Watcher {
     fn drop(&mut self) {
         // The probe first: it could otherwise start a new platform watch while this one stops.
         self.probe.take();
+        self.sweep.take();
         relock(&self.inner).take();
     }
 }
@@ -516,6 +559,42 @@ impl Probe {
 }
 
 impl Drop for Probe {
+    fn drop(&mut self) {
+        self.stop.take();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// The thread that sweeps the watched tree. Dropping it stops the thread.
+struct Sweep {
+    stop: Option<mpsc::Sender<()>>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl Sweep {
+    fn start(shared: Arc<Shared>, every: Duration) -> io::Result<Self> {
+        let (stop, stopped) = mpsc::channel::<()>();
+        let thread = thread::Builder::new()
+            .name("tauri-kit-watch-sweep".into())
+            .spawn(move || {
+                // Anything on the channel, or the watcher dropping its end, stops the sweep.
+                while let Err(mpsc::RecvTimeoutError::Timeout) = stopped.recv_timeout(every) {
+                    let changes = relock(&shared.resolver).sweep();
+                    if !changes.is_empty() {
+                        shared.tell(Notice::Changed(changes));
+                    }
+                }
+            })?;
+        Ok(Self {
+            stop: Some(stop),
+            thread: Some(thread),
+        })
+    }
+}
+
+impl Drop for Sweep {
     fn drop(&mut self) {
         self.stop.take();
         if let Some(thread) = self.thread.take() {
@@ -825,6 +904,30 @@ impl Resolver {
         }
     }
 
+    /// Lists every known folder again and reports what arrived or left since it was last listed —
+    /// what no notification announced. A file found now is taken as announced: unlike one found
+    /// while a batch is resolved, it has had a whole sweep interval for its notification to come.
+    fn sweep(&mut self) -> Vec<Change> {
+        let mut batch = Batch::default();
+        let mut folders: Vec<PathBuf> = self.folders.keys().cloned().collect();
+        // Parents before children: a folder that went is reported once, from its parent.
+        folders.sort_by_key(|f| f.components().count());
+        for folder in folders {
+            if !self.folders.contains_key(&folder) {
+                continue;
+            }
+            let present: HashSet<PathBuf> = self
+                .list(&folder)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|(_, is_folder)| !is_folder)
+                .map(|(name, _)| folder.join(name))
+                .collect();
+            self.relist(&folder, &present, &mut batch);
+        }
+        batch.changes
+    }
+
     /// Lists a folder and everything below it into the index, collecting the files in `found`.
     fn read_folder(&mut self, folder: &Path, found: &mut Vec<PathBuf>) {
         let Some(entries) = self.list(folder) else {
@@ -1061,6 +1164,71 @@ mod tests {
                 ChangeKind::Written
             )]
         );
+    }
+
+    #[test]
+    fn a_sweep_reports_what_arrived_or_left_with_no_notification_and_only_once() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("docs")).unwrap();
+        fs::write(dir.path().join("docs").join("kept.md"), "x").unwrap();
+        fs::write(dir.path().join("docs").join("gone.md"), "x").unwrap();
+        let mut r = resolver(dir.path());
+        assert_eq!(r.sweep(), vec![]);
+
+        // Made and removed with nothing said, as a sync client's placeholder is.
+        fs::write(dir.path().join("docs").join("arrived.md"), "x").unwrap();
+        fs::remove_file(dir.path().join("docs").join("gone.md")).unwrap();
+        fs::create_dir_all(dir.path().join("docs").join("new")).unwrap();
+        fs::write(dir.path().join("docs").join("new").join("inside.md"), "x").unwrap();
+        let mut changes = r.sweep();
+        changes.sort_by(|a, b| a.path.cmp(&b.path));
+        assert_eq!(
+            changes,
+            vec![
+                change(&Path::new("docs").join("arrived.md"), ChangeKind::Written),
+                change(&Path::new("docs").join("gone.md"), ChangeKind::Removed),
+                change(
+                    &Path::new("docs").join("new").join("inside.md"),
+                    ChangeKind::Written
+                ),
+            ]
+        );
+        // Known now: the next sweep has nothing to say.
+        assert_eq!(r.sweep(), vec![]);
+
+        // A folder that went is its files removed, once.
+        fs::remove_dir_all(dir.path().join("docs").join("new")).unwrap();
+        assert_eq!(
+            r.sweep(),
+            vec![change(
+                &Path::new("docs").join("new").join("inside.md"),
+                ChangeKind::Removed
+            )]
+        );
+    }
+
+    #[test]
+    fn a_sweep_leaves_out_what_the_app_wrote() {
+        let dir = tempfile::tempdir().unwrap();
+        let own = OwnWrites::new();
+        let mut r = Resolver::new(
+            resolved(dir.path()).unwrap(),
+            Rules::default(),
+            Some(own.clone()),
+        );
+        let path = r.root.join("mine.md");
+        own.record(&path, b"mine");
+        fs::write(&path, "mine").unwrap();
+        assert_eq!(r.sweep(), vec![]);
+    }
+
+    #[test]
+    fn a_sweep_more_often_than_the_debounce_allows_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let refused = Watch::new(dir.path())
+            .sweep_every(Duration::from_millis(500))
+            .start(|_| {});
+        assert_eq!(refused.unwrap_err().kind(), io::ErrorKind::InvalidInput);
     }
 
     #[test]

@@ -24,6 +24,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   view allows.
 - `tauri-kit-sidecar` (`loopback-client`): `TransportError::is_timeout` tells a backend that answered too late from one
   that was not reached; `Stream::headers` and `Stream::header` carry a streamed answer's headers, as `Response` does.
+- `tauri-kit-watch`: `Watch::sweep_every(every)` lists the watched tree again on an interval and reports a file that
+  arrived or left without a notification — and a folder that arrived whole, its files — as `Written` or `Removed`, in
+  the same `Notice::Changed` as an announced one. Some changes notify nothing: on Windows, a cloud sync client built on
+  the Cloud Files API (OneDrive and others) brings a file made on another device down as a placeholder, and creating
+  one raises no directory notification, so the file went unheard until something else touched its folder. A sweep
+  compares names only; content changes are still heard through notifications. The interval must be longer than twice
+  the debounce window.
 
 ## [0.25.0] - 2026-10-22
 
