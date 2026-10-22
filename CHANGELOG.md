@@ -9,6 +9,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ### Added
 
+- `tauri-kit-update`: a release channel and the kind of a release. `Channel::Stable` (the default) offers plain releases
+  only, `Channel::Beta` pre-releases too (`1.3.0-beta.2`); `UpdateOptions::channel` sets it and `Updates::set_channel`
+  changes it, letting go of the release found and looking again. The channel is the app's to remember, like looking on
+  or off. `Kind::Fix` (only the patch number rose) or `Kind::Feature` (the minor or major did) is counted from the
+  versions and carried by `Event::Found` and `Status::kind`, so an app can install a fix quietly and tell the person
+  about a feature; `kind_of` answers it for two versions.
 - `tauri-kit-webview`: `context_menu::add_selection_item(webview, label, on_pick)` puts an item of the app's own at the
   top of the menu the web view shows for selected text, and calls the app with that text when the person picks it. It
   extends the web view's own menu — WebView2's `ContextMenuRequested` on Windows, the web view's `willOpenMenu:withEvent:`
@@ -48,6 +54,18 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   one raises no directory notification, so the file went unheard until something else touched its folder. A sweep
   compares names only; content changes are still heard through notifications. The interval must be longer than twice
   the debounce window.
+
+### Changed
+
+- `tauri-kit-update` (breaking): `Source::check` takes the channel to look on (`fn check(&self, channel: Channel)`) — a
+  source with one manifest per channel picks it there; a source with one channel ignores it. `is_newer` takes the
+  channel too. `Event::Found` has a `kind` field (match it with `..` if you do not need it).
+
+### Fixed
+
+- `tauri-kit-update`: versions are compared in semver order, pre-releases included. An app running a pre-release (a beta
+  installed by hand) was offered nothing at all — its own version did not read as a version — and is now offered the
+  release that follows it; a version with a leading zero (`01.2.0`) is not a version.
 
 ## [0.25.0] - 2026-10-22
 

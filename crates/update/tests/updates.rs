@@ -6,7 +6,9 @@ use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
-use tauri_kit_update::{Event, Found, Looked, Source, Stage, UpdateOptions, Updates};
+use tauri_kit_update::{
+    Channel, Event, Found, Kind, Looked, Source, Stage, UpdateOptions, Updates,
+};
 
 /// What the source was asked, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +30,8 @@ struct Script {
     /// Versions kept from an earlier run.
     kept: Vec<String>,
     calls: Vec<Call>,
+    /// The channel of each check, in order.
+    channels: Vec<Channel>,
 }
 
 #[derive(Clone, Default)]
@@ -60,9 +64,10 @@ impl Source for Fake {
     type Update = ();
     type Installer = String;
 
-    fn check(&self) -> Result<Option<Found<()>>, String> {
+    fn check(&self, channel: Channel) -> Result<Option<Found<()>>, String> {
         self.record(Call::Check);
         let mut script = self.0.lock().unwrap();
+        script.channels.push(channel);
         let answer = match script.checks.pop_front() {
             Some(answer) => {
                 script.last = Some(answer.clone());
@@ -132,6 +137,7 @@ fn recorder() -> (
             Event::Found {
                 version,
                 first_time,
+                ..
             } => Seen::Found(version.into(), first_time),
             Event::Ready { version } => Seen::Ready(version.into()),
             Event::Failed { stage, version, .. } => Seen::Failed(stage, version.map(Into::into)),
@@ -437,4 +443,64 @@ fn installing_now_with_nothing_found_fails() {
     assert!(updates
         .install_now(|| panic!("nothing to install"))
         .is_err());
+}
+
+#[test]
+fn a_found_release_says_whether_it_is_a_fix_or_a_feature() {
+    let fake = Fake::answering(&[Ok(Some("1.1.1"))]);
+    let (sender, kinds) = mpsc::channel();
+    let updates = Updates::start(fake, options(None), move |event: Event<'_>| {
+        if let Event::Found { kind, .. } = event {
+            let _ = sender.send(kind);
+        }
+    });
+    assert_eq!(
+        kinds.recv_timeout(Duration::from_secs(10)).unwrap(),
+        Kind::Fix
+    );
+    assert_eq!(updates.status().kind, Some(Kind::Fix));
+}
+
+#[test]
+fn the_channel_is_asked_for_and_a_change_looks_again() {
+    // The source's latest is a beta: not offered on stable.
+    let fake = Fake::answering(&[Ok(Some("1.2.0-beta.1"))]);
+    let (handler, events) = recorder();
+    let updates = Updates::start(fake.clone(), options(None), handler);
+    wait_until("the first look", || fake.count(&Call::Check) == 1);
+    assert_eq!(updates.status().available, None);
+    assert_eq!(updates.status().channel, Channel::Stable);
+
+    updates.set_channel(Channel::Beta);
+    assert_eq!(next(&events), Seen::Found("1.2.0-beta.1".into(), true));
+    assert_eq!(next(&events), Seen::Ready("1.2.0-beta.1".into()));
+    let status = updates.status();
+    assert_eq!(
+        (status.channel, status.kind),
+        (Channel::Beta, Some(Kind::Feature))
+    );
+    assert_eq!(
+        fake.0.lock().unwrap().channels,
+        [Channel::Stable, Channel::Beta]
+    );
+
+    // Back to stable: the beta and its installer are let go, and it looks again.
+    updates.set_channel(Channel::Stable);
+    wait_until("a look on stable", || fake.count(&Call::Check) == 3);
+    let status = updates.status();
+    assert_eq!((status.available, status.ready), (None, None));
+    assert_eq!(fake.count(&Call::Forget("1.2.0-beta.1".into())), 1);
+
+    // The same channel again changes nothing.
+    updates.set_channel(Channel::Stable);
+    sleep(Duration::from_millis(200));
+    assert_eq!(fake.count(&Call::Check), 3);
+}
+
+#[test]
+fn an_app_running_a_beta_on_stable_is_offered_the_release_that_follows() {
+    let fake = Fake::answering(&[Ok(Some("1.3.0"))]);
+    let (handler, events) = recorder();
+    let _updates = Updates::start(fake, UpdateOptions::new("1.3.0-beta.2"), handler);
+    assert_eq!(next(&events), Seen::Found("1.3.0".into(), true));
 }

@@ -26,6 +26,15 @@
 //! Turning looking off, and remembering that, is the app's: it passes [`UpdateOptions::enabled`]
 //! and calls [`Updates::set_enabled`]. A look by hand ([`Updates::check_now`]) works either way.
 //!
+//! - **Which releases.** A [`Channel`]: stable offers plain releases only, beta pre-releases too
+//!   (`1.3.0-beta.2`). The channel is the app's to remember, like looking on or off
+//!   ([`UpdateOptions::channel`], [`Updates::set_channel`]). Leaving beta never goes back down: an app
+//!   on `1.3.0-beta.2` waits for `1.3.0`, which semver orders after it.
+//! - **What kind of release.** [`Kind`]: a fix (only the patch number rose) or a feature (the minor or
+//!   major did), counted from the versions — the versioning policy already says what each number
+//!   means. [`Event::Found`] and [`Status`] carry it; how to tell the person (a fix quietly, a feature
+//!   with a word) is the app's.
+//!
 //! On Windows the installer also has to wait for the closing app and its helpers to let go of their
 //! files. The crate's `nsis/wait-for-exit.nsh` is an installer hook that does — see that file.
 //!
@@ -36,7 +45,7 @@
 //!
 //! ```ignore
 //! use tauri_plugin_updater::{Update, UpdaterExt};
-//! use tauri_kit_update::{Found, Source};
+//! use tauri_kit_update::{Channel, Found, Source};
 //!
 //! struct Plugin(tauri::AppHandle);
 //!
@@ -44,8 +53,14 @@
 //!     type Update = Update;
 //!     type Installer = Vec<u8>;
 //!
-//!     fn check(&self) -> Result<Option<Found<Update>>, String> {
-//!         let updater = self.0.updater().map_err(|e| e.to_string())?;
+//!     fn check(&self, channel: Channel) -> Result<Option<Found<Update>>, String> {
+//!         // One manifest per channel, both signed with the updater key.
+//!         let manifest = match channel {
+//!             Channel::Stable => "https://example.com/releases/latest/download/latest.json",
+//!             Channel::Beta => "https://example.com/releases/download/beta/latest.json",
+//!         };
+//!         let updater = self.0.updater_builder().endpoints(vec![manifest.parse().unwrap()])
+//!             .map_err(|e| e.to_string())?.build().map_err(|e| e.to_string())?;
 //!         let update = tauri::async_runtime::block_on(updater.check()).map_err(|e| e.to_string())?;
 //!         Ok(update.map(|u| Found { version: u.version.clone(), update: u }))
 //!     }
@@ -76,11 +91,32 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+/// Which releases to offer.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Channel {
+    /// Plain releases only. The default.
+    #[default]
+    Stable,
+    /// Pre-releases too (`1.3.0-beta.2`), and plain releases as they come.
+    Beta,
+}
+
+/// What a newer release is to the running one, by its version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
+    /// Only the patch number rose (or a pre-release of the same version moved on): fixes.
+    Fix,
+    /// The minor or major number rose: something new.
+    Feature,
+}
+
 /// A newer release a [`Source`] found: its version, and whatever the source needs to download and
 /// install it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Found<U> {
-    /// The release's version, `major.minor.patch`.
+    /// The release's version, `major.minor.patch` with a pre-release tail on the beta channel.
     pub version: String,
     /// The source's own handle on it.
     pub update: U,
@@ -93,9 +129,10 @@ pub trait Source: Send + Sync + 'static {
     /// A downloaded, checked installer: its bytes, or the file it was saved to.
     type Installer: Send + 'static;
 
-    /// The newest release, or `None` when there is none to offer. A release that is not newer
-    /// than the running version is ignored, so a source may simply report the latest one.
-    fn check(&self) -> Result<Option<Found<Self::Update>>, String>;
+    /// The newest release on `channel`, or `None` when there is none to offer. A release that is not
+    /// newer than the running version — or a pre-release on the stable channel — is ignored, so a
+    /// source may simply report the latest one.
+    fn check(&self, channel: Channel) -> Result<Option<Found<Self::Update>>, String>;
 
     /// Downloads the release and checks it — against the updater's key, a publisher's signature.
     /// An installer that does not check out is an error, never an installer.
@@ -138,6 +175,8 @@ pub struct UpdateOptions {
     pub state_file: Option<PathBuf>,
     /// Whether it looks on its own. Default on.
     pub enabled: bool,
+    /// Which releases it offers. Default [`Channel::Stable`].
+    pub channel: Channel,
 }
 
 impl UpdateOptions {
@@ -148,6 +187,7 @@ impl UpdateOptions {
             every: Duration::from_secs(12 * 60 * 60),
             state_file: None,
             enabled: true,
+            channel: Channel::Stable,
         }
     }
 }
@@ -171,6 +211,8 @@ pub enum Event<'a> {
     Found {
         /// Its version.
         version: &'a str,
+        /// A fix or a feature, to the running version.
+        kind: Kind,
         /// Seen for the first time.
         first_time: bool,
     },
@@ -209,6 +251,10 @@ pub struct Status {
     pub enabled: bool,
     /// The newer release found, if any.
     pub available: Option<String>,
+    /// What that release is to the running version.
+    pub kind: Option<Kind>,
+    /// The channel it offers releases from.
+    pub channel: Channel,
     /// The version whose installer is downloaded and checked, if any.
     pub ready: Option<String>,
     /// An installer is being downloaded.
@@ -226,24 +272,118 @@ pub struct Status {
     pub last_answered: Option<u64>,
 }
 
-/// Whether `candidate` is a newer `major.minor.patch` than `current`. A version that is not of that
-/// form — a pre-release, say — is never newer.
-pub fn is_newer(candidate: &str, current: &str) -> bool {
-    match (triple(candidate), triple(current)) {
-        (Some(a), Some(b)) => a > b,
+/// Whether `candidate` is a release to offer over `current` on `channel`: newer in semver order
+/// (a pre-release before its release — `1.3.0-beta.2` < `1.3.0`), and on the stable channel a plain
+/// release. A version that does not read as semver is never newer. The running version may be a
+/// pre-release itself: an app that installed a beta is offered the release that follows it.
+pub fn is_newer(candidate: &str, current: &str, channel: Channel) -> bool {
+    match (Version::parse(candidate), Version::parse(current)) {
+        (Some(a), Some(b)) => (channel == Channel::Beta || a.pre.is_empty()) && a > b,
         _ => false,
     }
 }
 
-fn triple(version: &str) -> Option<(u64, u64, u64)> {
-    let version = version.strip_prefix('v').unwrap_or(version);
-    let mut parts = version.split('.');
-    let parsed = (
-        parts.next()?.parse().ok()?,
-        parts.next()?.parse().ok()?,
-        parts.next()?.parse().ok()?,
-    );
-    parts.next().is_none().then_some(parsed)
+/// What `candidate` is to `current` — a fix when their major and minor numbers are the same, a
+/// feature when not. `None` when either does not read as semver.
+pub fn kind_of(candidate: &str, current: &str) -> Option<Kind> {
+    let (a, b) = (Version::parse(candidate)?, Version::parse(current)?);
+    Some(if (a.major, a.minor) == (b.major, b.minor) {
+        Kind::Fix
+    } else {
+        Kind::Feature
+    })
+}
+
+/// A semver version, ordered as semver orders them (build metadata is not part of the order).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Version {
+    major: u64,
+    minor: u64,
+    patch: u64,
+    pre: Vec<Identifier>,
+}
+
+/// One dot-separated part of a pre-release tail: numbers order below words, and by value.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Identifier {
+    Number(u64),
+    Word(String),
+}
+
+impl Version {
+    fn parse(version: &str) -> Option<Version> {
+        let version = version.strip_prefix('v').unwrap_or(version);
+        let version = version.split_once('+').map_or(version, |(v, _)| v);
+        let (core, pre) = match version.split_once('-') {
+            Some((core, pre)) => (core, Some(pre)),
+            None => (version, None),
+        };
+        // Digits only, and no leading zero but in `0` itself (semver §2, §9).
+        let numeric = |part: &str| {
+            !part.is_empty()
+                && part.bytes().all(|b| b.is_ascii_digit())
+                && (part == "0" || !part.starts_with('0'))
+        };
+        let number = |part: &str| numeric(part).then(|| part.parse().ok()).flatten();
+        let mut parts = core.split('.');
+        let (major, minor, patch) = (
+            number(parts.next()?)?,
+            number(parts.next()?)?,
+            number(parts.next()?)?,
+        );
+        if parts.next().is_some() {
+            return None;
+        }
+        let pre = match pre {
+            None => Vec::new(),
+            Some(pre) => pre
+                .split('.')
+                .map(|part| {
+                    if part.is_empty()
+                        || !part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                    {
+                        None
+                    } else if part.bytes().all(|b| b.is_ascii_digit()) {
+                        numeric(part)
+                            .then(|| part.parse().ok())
+                            .flatten()
+                            .map(Identifier::Number)
+                    } else {
+                        Some(Identifier::Word(part.to_owned()))
+                    }
+                })
+                .collect::<Option<Vec<_>>>()?,
+        };
+        Some(Version {
+            major,
+            minor,
+            patch,
+            pre,
+        })
+    }
+}
+
+impl PartialOrd for Version {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Version {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.major, self.minor, self.patch)
+            .cmp(&(other.major, other.minor, other.patch))
+            .then_with(|| {
+                // A release orders after its pre-releases; between pre-releases, part by part, and a
+                // longer tail after the shorter one it starts with.
+                match (self.pre.is_empty(), other.pre.is_empty()) {
+                    (true, true) => std::cmp::Ordering::Equal,
+                    (true, false) => std::cmp::Ordering::Greater,
+                    (false, true) => std::cmp::Ordering::Less,
+                    (false, false) => self.pre.cmp(&other.pre),
+                }
+            })
+    }
 }
 
 const FORMAT: &str = "tauri-kit-update/1";
@@ -270,6 +410,7 @@ struct Inner<S: Source> {
     every: Duration,
     state_file: Option<PathBuf>,
     enabled: AtomicBool,
+    channel: Mutex<Channel>,
     stopped: AtomicBool,
     downloading: AtomicBool,
     saved: Mutex<Saved>,
@@ -316,7 +457,7 @@ impl<S: Source> Updates<S> {
             .unwrap_or_default();
         let mut ready = None;
         if let Some(version) = saved.ready.clone() {
-            if is_newer(&version, &options.current) {
+            if is_newer(&version, &options.current, options.channel) {
                 ready = source.restore(&version);
             } else {
                 source.forget(&version);
@@ -332,6 +473,7 @@ impl<S: Source> Updates<S> {
             every: options.every,
             state_file: options.state_file,
             enabled: AtomicBool::new(options.enabled),
+            channel: Mutex::new(options.channel),
             stopped: AtomicBool::new(false),
             downloading: AtomicBool::new(false),
             saved: Mutex::new(saved),
@@ -355,9 +497,14 @@ impl<S: Source> Updates<S> {
             let saved = lock(&inner.saved);
             (saved.failed.clone(), saved.checked_at, saved.answered_at)
         };
+        let available = lock(&inner.found).as_ref().map(|f| f.version.clone());
         Status {
             enabled: inner.enabled.load(Ordering::SeqCst),
-            available: lock(&inner.found).as_ref().map(|f| f.version.clone()),
+            kind: available
+                .as_deref()
+                .and_then(|v| kind_of(v, &inner.current)),
+            channel: *lock(&inner.channel),
+            available,
             ready: lock(&inner.ready).as_ref().map(|(f, _)| f.version.clone()),
             downloading: inner.downloading.load(Ordering::SeqCst),
             failed,
@@ -372,14 +519,23 @@ impl<S: Source> Updates<S> {
         let inner = &self.inner;
         inner.enabled.store(on, Ordering::SeqCst);
         if !on {
-            *lock(&inner.found) = None;
-            let kept = lock(&inner.ready).take();
-            if let Some((found, _)) = kept {
-                inner.source.forget(&found.version);
-            }
-            lock(&inner.saved).ready = None;
+            inner.let_go();
             inner.save();
         }
+        inner.wake.1.notify_all();
+    }
+
+    /// Offers releases from `channel` from now on. A change lets go of the release found and its
+    /// installer and looks again at once (when looking is on); the same channel changes nothing.
+    /// Remembering the choice is the app's.
+    pub fn set_channel(&self, channel: Channel) {
+        let inner = &self.inner;
+        if std::mem::replace(&mut *lock(&inner.channel), channel) == channel {
+            return;
+        }
+        inner.let_go();
+        lock(&inner.saved).checked_at = None;
+        inner.save();
         inner.wake.1.notify_all();
     }
 
@@ -435,6 +591,16 @@ impl<S: Source> Drop for Updates<S> {
 }
 
 impl<S: Source> Inner<S> {
+    /// Lets go of the release found and its installer.
+    fn let_go(&self) {
+        *lock(&self.found) = None;
+        let kept = lock(&self.ready).take();
+        if let Some((found, _)) = kept {
+            self.source.forget(&found.version);
+        }
+        lock(&self.saved).ready = None;
+    }
+
     fn emit(&self, event: Event<'_>) {
         (lock(&self.handler))(event);
     }
@@ -488,7 +654,8 @@ impl<S: Source> Inner<S> {
     }
 
     fn look(&self) -> Looked {
-        let answer = self.source.check();
+        let channel = *lock(&self.channel);
+        let answer = self.source.check(channel);
         let found = match answer {
             Err(error) => {
                 lock(&self.saved).checked_at = Some(now());
@@ -500,7 +667,7 @@ impl<S: Source> Inner<S> {
                 });
                 return Looked::Unreachable(error);
             }
-            Ok(found) => found.filter(|f| is_newer(&f.version, &self.current)),
+            Ok(found) => found.filter(|f| is_newer(&f.version, &self.current, channel)),
         };
         let first_time = {
             let mut saved = lock(&self.saved);
@@ -548,6 +715,7 @@ impl<S: Source> Inner<S> {
         self.save();
         self.emit(Event::Found {
             version: &version,
+            kind: kind_of(&version, &self.current).unwrap_or(Kind::Feature),
             first_time,
         });
         Looked::Found(version)
@@ -607,19 +775,76 @@ impl<S: Source> Inner<S> {
 mod tests {
     use super::*;
 
+    const S: Channel = Channel::Stable;
+    const B: Channel = Channel::Beta;
+
     #[test]
-    fn only_a_higher_plain_version_is_newer() {
-        assert!(is_newer("1.2.0", "1.1.9"));
-        assert!(is_newer("v2.0.0", "1.99.99"));
-        assert!(is_newer("0.10.0", "0.9.0"), "numbers, not text");
-        assert!(!is_newer("1.1.0", "1.1.0"));
-        assert!(!is_newer("1.0.9", "1.1.0"));
+    fn on_stable_only_a_higher_plain_version_is_newer() {
+        assert!(is_newer("1.2.0", "1.1.9", S));
+        assert!(is_newer("v2.0.0", "1.99.99", S));
+        assert!(is_newer("0.10.0", "0.9.0", S), "numbers, not text");
+        assert!(!is_newer("1.1.0", "1.1.0", S));
+        assert!(!is_newer("1.0.9", "1.1.0", S));
         assert!(
-            !is_newer("1.2.0-beta.1", "1.1.0"),
-            "a pre-release is never offered"
+            !is_newer("1.2.0-beta.1", "1.1.0", S),
+            "a pre-release is not offered on stable"
         );
-        assert!(!is_newer("1.2", "1.1.0"));
-        assert!(!is_newer("1.2.0.1", "1.1.0"));
-        assert!(!is_newer("1.2.0", "not a version"));
+        assert!(!is_newer("1.2", "1.1.0", S));
+        assert!(!is_newer("1.2.0.1", "1.1.0", S));
+        assert!(
+            !is_newer("01.2.0", "1.1.0", S),
+            "a number with a leading zero is not semver"
+        );
+        assert!(!is_newer("1.2.0", "not a version", S));
+        assert!(
+            is_newer("1.2.0+build.7", "1.1.0", S),
+            "build metadata is not part of the order"
+        );
+    }
+
+    #[test]
+    fn beta_offers_pre_releases_in_semver_order() {
+        assert!(is_newer("1.3.0-beta.1", "1.2.0", B));
+        assert!(is_newer("1.3.0-beta.2", "1.3.0-beta.1", B));
+        assert!(
+            is_newer("1.3.0-beta.10", "1.3.0-beta.9", B),
+            "numbers by value"
+        );
+        assert!(is_newer("1.3.0-rc.1", "1.3.0-beta.9", B), "words by text");
+        assert!(
+            is_newer("1.3.0-beta.1.1", "1.3.0-beta.1", B),
+            "a longer tail after its start"
+        );
+        assert!(is_newer("1.3.0-beta", "1.3.0-1", B), "words after numbers");
+        assert!(is_newer("1.3.0", "1.3.0-beta.2", B));
+        assert!(
+            !is_newer("1.3.0-beta.1", "1.3.0", B),
+            "never back to a pre-release of the running release"
+        );
+        assert!(!is_newer("1.3.0-beta..1", "1.2.0", B));
+    }
+
+    #[test]
+    fn leaving_beta_waits_for_the_release_and_never_goes_down() {
+        assert!(
+            !is_newer("1.2.0", "1.3.0-beta.2", S),
+            "the last release is older than the beta"
+        );
+        assert!(
+            is_newer("1.3.0", "1.3.0-beta.2", S),
+            "the release that follows the beta"
+        );
+    }
+
+    #[test]
+    fn the_kind_is_counted_from_the_versions() {
+        assert_eq!(kind_of("1.2.1", "1.2.0"), Some(Kind::Fix));
+        assert_eq!(kind_of("1.3.0", "1.2.9"), Some(Kind::Feature));
+        assert_eq!(kind_of("2.0.0", "1.9.9"), Some(Kind::Feature));
+        assert_eq!(kind_of("0.14.0", "0.13.13"), Some(Kind::Feature));
+        assert_eq!(kind_of("1.3.0-beta.2", "1.3.0-beta.1"), Some(Kind::Fix));
+        assert_eq!(kind_of("1.3.0", "1.3.0-beta.2"), Some(Kind::Fix));
+        assert_eq!(kind_of("1.3.0-beta.1", "1.2.0"), Some(Kind::Feature));
+        assert_eq!(kind_of("x", "1.2.0"), None);
     }
 }
