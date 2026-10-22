@@ -49,6 +49,10 @@ declared minimum compiler (`rust-version`).
 
 ## Cutting a release
 
+Cut it on top of a commit whose CI is green on all three platforms. A contribution checked on one
+platform can leave another red (a function only one platform calls is dead code on the others),
+and a red lint step skips that platform's tests.
+
 One commit, `chore: release <version>`, moves every version line together:
 
 1. `version` in the root `Cargo.toml`, and every requirement one crate here has on another
