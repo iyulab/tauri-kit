@@ -32,7 +32,9 @@
 //! a file from, and [`append_line`] adds a line to a log crash-safely.
 //!
 //! Sync clients keep both sides of a conflicting change, the second under a marked name;
-//! [`conflict_copy_of`] recognises those names and says which file each is a copy of.
+//! [`conflict_copy_of`] recognises those names and says which file each is a copy of, and
+//! [`conflict_copy_of_on`] also the names that carry a device's name (OneDrive's), for the devices
+//! it is given.
 //!
 //! A new file or folder whose name is taken goes under the next free one — `notes (1).md` —
 //! found by [`free_path`] and taken by [`claim_free_path`], which moves on if another program takes
@@ -62,7 +64,7 @@ mod conflict;
 mod root;
 mod trash;
 pub use append::append_line;
-pub use conflict::conflict_copy_of;
+pub use conflict::{conflict_copy_of, conflict_copy_of_on};
 pub use root::{is_outside, Root};
 pub use trash::has_trash;
 mod name;

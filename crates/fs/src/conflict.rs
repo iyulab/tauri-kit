@@ -17,8 +17,11 @@
 //! | Nextcloud, ownCloud | `a (conflicted copy 2026-09-29 143015).txt` |
 //! | Google Drive | `a (conflicted copy from Laptop on 2026-09-29).txt` |
 //!
-//! Not recognised: OneDrive's `a-ComputerName.txt`, which cannot be told apart from a name a person
-//! chose, and copies of copies (`a (conflicted copy …) (1).txt`).
+//! OneDrive keeps the other side as `a-<device>.txt`, the device being the computer whose change
+//! lost. By its name alone that cannot be told apart from a name a person chose (`회의-서울.md`), so
+//! [`conflict_copy_of`] leaves it out; [`conflict_copy_of_on`] takes the names of the devices that
+//! sync the folder and recognises it for those. Copies of copies (`a (conflicted copy …) (1).txt`)
+//! are not recognised.
 
 /// The name of the file that `file_name` is a sync client's conflict copy of, or `None` when the
 /// name does not mark a conflict copy.
@@ -41,6 +44,40 @@ pub fn conflict_copy_of(file_name: &str) -> Option<String> {
         .map(|original| format!("{original}{ext}"))
         // A name with no extension, where the last dot belongs to the Syncthing marker itself.
         .or_else(|| syncthing(file_name).map(str::to_owned))
+}
+
+/// Like [`conflict_copy_of`], and also OneDrive's copy — `<original>-<device>` before the last
+/// extension — for a device named in `devices`: the names of the computers that sync the folder,
+/// as OneDrive writes them (compared without regard to ASCII case). The device a copy names is the
+/// one whose change lost, so this computer's own name recognises the copies made here; a copy made
+/// on another computer is recognised once its name is known.
+///
+/// A name like that is still one a person could have chosen: give it only device names, and check
+/// that the original is there before treating the file as a copy.
+///
+/// ```
+/// use tauri_kit_fs::conflict_copy_of_on;
+///
+/// assert_eq!(conflict_copy_of_on("접수-1-DESKTOP-7Q2.md", &["desktop-7q2"]).as_deref(), Some("접수-1.md"));
+/// assert_eq!(conflict_copy_of_on("회의-서울.md", &["desktop-7q2"]), None);
+/// ```
+pub fn conflict_copy_of_on(file_name: &str, devices: &[&str]) -> Option<String> {
+    conflict_copy_of(file_name).or_else(|| {
+        let (stem, ext) = split_extension(file_name);
+        devices
+            .iter()
+            .map(|d| d.trim())
+            .filter(|d| !d.is_empty())
+            .find_map(|device| {
+                let marker = stem.len().checked_sub(device.len() + 1)?;
+                let original = stem.get(..marker)?;
+                let named = stem.get(marker + 1..)?;
+                (!original.is_empty()
+                    && stem[marker..].starts_with('-')
+                    && named.eq_ignore_ascii_case(device))
+                .then(|| format!("{original}{ext}"))
+            })
+    })
 }
 
 /// Splits off the last extension, dot included. A leading dot (`.profile`) is not an extension.
@@ -92,7 +129,38 @@ fn parenthesized(stem: &str) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use super::conflict_copy_of;
+    use super::{conflict_copy_of, conflict_copy_of_on};
+
+    #[test]
+    fn onedrive_copies_of_named_devices() {
+        let devices = ["iyunb02", "UJ-Book3"];
+        // OneDrive names the copy after the computer whose change lost, as it spells it.
+        assert_eq!(
+            conflict_copy_of_on("접수-1-iyunb02.md", &devices).as_deref(),
+            Some("접수-1.md")
+        );
+        assert_eq!(
+            conflict_copy_of_on("접수-1-UJ-BOOK3.md", &devices).as_deref(),
+            Some("접수-1.md"),
+            "a device name is compared without regard to case"
+        );
+        assert_eq!(
+            conflict_copy_of_on("회의.fd-iyunb02.md", &devices).as_deref(),
+            Some("회의.fd.md"),
+            "the marker goes before the last extension"
+        );
+        // A name that only looks like one: another device, no device at all, or nothing before it.
+        assert_eq!(conflict_copy_of_on("회의-서울.md", &devices), None);
+        assert_eq!(conflict_copy_of_on("접수-1.md", &devices), None);
+        assert_eq!(conflict_copy_of_on("-iyunb02.md", &devices), None);
+        assert_eq!(conflict_copy_of_on("접수-1-iyunb02.md", &[]), None);
+        assert_eq!(conflict_copy_of_on("접수-1-iyunb02.md", &[" "]), None);
+        // The other clients' copies are recognised as they are without devices.
+        assert_eq!(
+            conflict_copy_of_on("a (conflicted copy 2026-09-29 143015).txt", &devices).as_deref(),
+            Some("a.txt")
+        );
+    }
 
     fn copy_of(name: &str) -> Option<String> {
         conflict_copy_of(name)

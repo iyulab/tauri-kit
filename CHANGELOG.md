@@ -24,6 +24,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   view allows.
 - `tauri-kit-sidecar` (`loopback-client`): `TransportError::is_timeout` tells a backend that answered too late from one
   that was not reached; `Stream::headers` and `Stream::header` carry a streamed answer's headers, as `Response` does.
+- `tauri-kit-fs`: `conflict_copy_of_on(file_name, devices)` also recognises OneDrive's conflict copy, `<original>-<device>`
+  before the last extension, for the devices it is given (compared without regard to case) — the device being the computer
+  whose change lost, so this computer's own name recognises the copies made here. By name alone such a copy cannot be told
+  from a name a person chose, which is why `conflict_copy_of` still leaves it out.
 - `tauri-kit-watch`: `Watch::sweep_every(every)` lists the watched tree again on an interval and reports a file that
   arrived or left without a notification — and a folder that arrived whole, its files — as `Written` or `Removed`, in
   the same `Notice::Changed` as an announced one. Some changes notify nothing: on Windows, a cloud sync client built on
