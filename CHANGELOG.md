@@ -9,6 +9,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ### Added
 
+- `tauri-kit-webview`: `context_menu::add_selection_item(webview, label, on_pick)` puts an item of the app's own at the
+  top of the menu the web view shows for selected text, and calls the app with that text when the person picks it. It
+  extends the web view's own menu — WebView2's `ContextMenuRequested` on Windows, the web view's `willOpenMenu:withEvent:`
+  on macOS — so copy, paste and the platform's other entries stay; a page that wants an entry of its own otherwise has to
+  replace the whole menu. The label is read each time the menu opens, so it follows the app's language. On macOS the
+  framework's web view class takes no menu hook, so the method is added to that class at run time (the web view's own
+  implementation runs first); a class that already has its own is refused with `Unsupported`. Windows and macOS.
 - `tauri-kit-sidecar` (`relay` feature): a web page's way to a loopback backend through the app, without the page ever
   holding the backend's credential. `Relay::builder(source)` takes where the endpoint comes from (`move || discover(&path)`
   for a backend that publishes a discovery file), `.origin(..)` the page origins it answers, `.allow(method, template)` and

@@ -51,10 +51,17 @@
 //!   (WebView2's own way), without taking drag and drop away from the page as a framework's drop
 //!   handler does on Windows.
 //!
+//! A seventh is for apps that act on what the person selected in a page:
+//!
+//! - **An item of the app's own in the context menu for selected text.** [`context_menu::add_selection_item`] extends the
+//!   web view's own menu (WebView2's `ContextMenuRequested`, a macOS web view's `willOpenMenu:withEvent:`) instead of a page
+//!   replacing it and losing copy, paste and the platform's other entries, and hands the app the selected text.
+//!
 //! On macOS and Linux the system web view is part of the operating system: [`runtime`] answers
 //! [`Runtime::System`] and there is no profile to clear.
 
 pub mod caption;
+pub mod context_menu;
 pub mod drop;
 pub mod lock;
 

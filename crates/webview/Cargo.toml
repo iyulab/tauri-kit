@@ -18,5 +18,13 @@ windows-core = "0.62"
 windows = { version = "0.62", features = ["Win32_System_Com"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
+# The web view type an app holds on macOS comes from the same objc2 bindings its Tauri version uses.
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSEvent", "NSMenu", "NSMenuItem", "NSResponder", "NSUserInterfaceItemIdentification", "NSView"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSEnumerator", "NSError", "NSString"] }
+objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "WKWebView"] }
+
 [dev-dependencies]
 tempfile = "3"
