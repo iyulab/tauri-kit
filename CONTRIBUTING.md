@@ -62,3 +62,5 @@ One commit, `chore: release <version>`, moves every version line together:
 
 Then tag `v<version>`, push the branch and the tag, run `gh workflow run publish-nuget.yml --ref v<version>`,
 and `cargo publish -p <crate>` for each crate, `tauri-kit-fs` first.
+`cargo publish` packages the working tree, not the tag: publish from a checkout of the tag (`git checkout
+v<version>`), with `git status` clean and `git rev-parse HEAD` equal to `git rev-parse v<version>^{commit}`.

@@ -7,6 +7,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-22
+
 ### Added
 
 - `tauri-kit-webview`: `caption::MaximizeButton` keeps Windows 11's Snap Layouts on a maximize button the web page draws, in
@@ -16,10 +18,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   caller): it answers `HTMAXBUTTON`, a click on it maximizes or restores the window, a right-click opens the window's system
   menu, the window's top resize band is passed on, and it reports `ButtonEvent`s (enter, leave, down, up) so the page can
   draw hover and pressed. Windows only; elsewhere it does nothing.
-
-## [0.25.0] - 2026-10-22
-
-### Added
+  (`tauri-kit-webview` 0.25.0 on crates.io was published from the commit after the `v0.25.0` tag and carries this
+  block; every other crate and the NuGet packages match the tag.)
 
 - `tauri-kit-sidecar` (`pipe` feature): a client of a supervisor's local pipe, for a shell whose backend is started and kept
   by another process rather than by the shell. One JSON object per line over a named pipe (Windows) or a Unix socket:
