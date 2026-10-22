@@ -39,6 +39,7 @@ pub enum ButtonEvent {
 
 /// The answer over the sink: the maximize button, or — inside the window's top resize band while it is not maximized — passed
 /// on, so the window's own resize handling answers there.
+#[cfg(any(windows, test))]
 fn hit(client_y: i32, resize_band: i32, maximized: bool) -> Hit {
     if !maximized && client_y < resize_band {
         Hit::PassOn
@@ -47,6 +48,7 @@ fn hit(client_y: i32, resize_band: i32, maximized: bool) -> Hit {
     }
 }
 
+#[cfg(any(windows, test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Hit {
     MaximizeButton,
@@ -54,6 +56,7 @@ enum Hit {
 }
 
 /// What a release does: toggle only when the press began on the button.
+#[cfg(any(windows, test))]
 fn on_release(pressed: bool, maximized: bool) -> Option<Toggle> {
     pressed.then_some(if maximized {
         Toggle::Restore
@@ -62,6 +65,7 @@ fn on_release(pressed: bool, maximized: bool) -> Option<Toggle> {
     })
 }
 
+#[cfg(any(windows, test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Toggle {
     Maximize,

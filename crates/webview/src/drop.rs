@@ -35,6 +35,7 @@ pub struct DroppedFiles {
 }
 
 /// Whether a message's text is one the app asked to receive.
+#[cfg(any(windows, test))]
 fn is_for(message: &str, prefix: &str) -> bool {
     !prefix.is_empty() && message.starts_with(prefix)
 }
