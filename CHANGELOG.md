@@ -7,6 +7,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-22
+
 ### Added
 
 - `tauri-kit-sidecar` (`pipe` feature): a client of a supervisor's local pipe, for a shell whose backend is started and kept
@@ -768,6 +770,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - `tauri-kit-sidecar`: bundled helper processes without a console window, stopped together with
   everything they start, with readiness waits that notice a crash.
 
+[0.25.0]: https://github.com/iyulab/tauri-kit/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/iyulab/tauri-kit/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/iyulab/tauri-kit/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/iyulab/tauri-kit/compare/v0.21.0...v0.22.0
