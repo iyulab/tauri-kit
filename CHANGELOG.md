@@ -9,6 +9,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ### Added
 
+- `tauri-kit-update`: `github::Releases` — releases published on GitHub as the place to look. `latest(fetch, channel)`
+  reads the newest version: on the stable channel from the `…/releases/latest` redirect (one request, no API call and so
+  no API rate limit, pre-releases and drafts skipped), on the beta channel from the API's release list (the highest
+  version in semver order, drafts skipped). `asset_url(version)` names the installer from a template
+  (`Example_{version}_x64-setup.exe`) under tags `v<version>` (`tag_prefix`), and `download(fetch, version, dest)` saves it
+  beside `dest` and renames it into place only when it arrived whole. The requests go through `github::Fetch`, so an app
+  keeps the HTTP client its users' networks need (a proxy from a configuration script, say); the `github` feature adds
+  `github::Ureq`, over ureq with the OS's TLS and the PC's proxy settings. Checking what arrived and running it stay
+  with the app's `Source`.
 - `tauri-kit-update` (`authenticode` feature): `verify::authenticode(path, &Expect)` checks that a downloaded installer
   carries a valid Authenticode signature (a chain Windows trusts, revocation not asked so an offline network does not block
   updates) and that its signer is the expected one — by subject, issuer and thumbprint (SHA-1 or SHA-256), each a list of

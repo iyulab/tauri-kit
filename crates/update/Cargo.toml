@@ -13,6 +13,7 @@ categories = ["os"]
 tauri-kit-fs = { path = "../fs", version = "0.26.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+ureq = { version = "3", default-features = false, features = ["win-system-proxy"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", optional = true, features = [
@@ -27,6 +28,10 @@ windows-sys = { version = "0.61", optional = true, features = [
 # `verify::authenticode`: check a downloaded installer's Authenticode signature against the expected
 # signer (subject, issuer, thumbprint). Windows; elsewhere it refuses every file.
 authenticode = ["dep:windows-sys"]
+# `github::Ureq`: the requests `github::Releases` makes, over ureq with the OS's TLS (SChannel on
+# Windows, Security.framework on macOS; OpenSSL elsewhere) and the PC's proxy settings. Without it,
+# `github::Releases` works over the app's own HTTP client (`github::Fetch`).
+github = ["dep:ureq", "ureq/native-tls"]
 
 [dev-dependencies]
 tempfile = "3"

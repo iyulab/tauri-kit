@@ -35,6 +35,10 @@
 //!   means. [`Event::Found`] and [`Status`] carry it; how to tell the person (a fix quietly, a feature
 //!   with a word) is the app's.
 //!
+//! Releases published on GitHub are one such place: [`github::Releases`] finds the newest on a
+//! channel (the `latest` redirect, or the release list for beta) and downloads its installer, over
+//! the app's HTTP client or, with the `github` feature, `ureq`.
+//!
 //! A source that downloads an installer itself checks who signed it before handing it on:
 //! [`verify::authenticode`] (feature `authenticode`) compares the signer with an [`verify::Expect`] —
 //! subject, issuer, thumbprint — rather than the display name alone.
@@ -87,6 +91,7 @@
 //! runtime's. A source with its own installer files implements [`Source::restore`] and
 //! [`Source::forget`] too.
 
+pub mod github;
 #[cfg(feature = "authenticode")]
 pub mod verify;
 
