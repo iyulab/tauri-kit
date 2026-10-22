@@ -22,6 +22,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   `reason`: `origin-refused` and `route-refused` (403, before any call), `backend-unreachable` (503), `backend-timeout`
   (504). It holds no web view type, so an app connects it to its URI scheme handler and carries streams the way its web
   view allows.
+- `tauri-kit-webview`: `drop::receive_dropped_files(controller, prefix, on_files)` says where the files dropped onto a page
+  are. A page gets dropped `File` objects but never their location, and a framework's own drop handler, which would report
+  it, takes HTML5 drag and drop away from the page on Windows. The page posts the files back with
+  `chrome.webview.postMessageWithAdditionalObjects(prefix + …, event.dataTransfer.files)`; the host receives each file's path
+  (`ICoreWebView2File`), the message text and the sending document's URL as `DroppedFiles`. Only messages starting with the
+  app's (non-empty) prefix are read — the framework's own messages on the same channel are left alone. Windows only.
 - `tauri-kit-sidecar` (`loopback-client`): `TransportError::is_timeout` tells a backend that answered too late from one
   that was not reached; `Stream::headers` and `Stream::header` carry a streamed answer's headers, as `Response` does.
 - `tauri-kit-fs`: `conflict_copy_of_on(file_name, devices)` also recognises OneDrive's conflict copy, `<original>-<device>`

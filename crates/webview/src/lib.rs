@@ -44,10 +44,18 @@
 //! - **Keep Snap Layouts on the page's maximize button.** [`caption::MaximizeButton`] places an input-sink window over the
 //!   button so Windows 11 shows its window-snapping flyout there, as it does over a system caption.
 //!
+//! A sixth is for pages that keep HTML5 drag and drop and also take files from other apps:
+//!
+//! - **Say where dropped files are.** A page gets dropped `File` objects but never their location;
+//!   [`drop::receive_dropped_files`] reads the location of each file the page posts back in a message
+//!   (WebView2's own way), without taking drag and drop away from the page as a framework's drop
+//!   handler does on Windows.
+//!
 //! On macOS and Linux the system web view is part of the operating system: [`runtime`] answers
 //! [`Runtime::System`] and there is no profile to clear.
 
 pub mod caption;
+pub mod drop;
 pub mod lock;
 
 #[cfg(windows)]
