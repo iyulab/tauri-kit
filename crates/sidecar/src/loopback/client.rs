@@ -74,7 +74,24 @@ impl Response {
 
 /// Why a request got no answer.
 #[derive(Debug)]
-pub struct TransportError(String);
+pub struct TransportError(String, bool);
+
+impl TransportError {
+    fn new(message: impl Into<String>) -> TransportError {
+        TransportError(message.into(), false)
+    }
+
+    fn from_ureq(error: ureq::Error) -> TransportError {
+        let timed_out = matches!(error, ureq::Error::Timeout(_));
+        TransportError(error.to_string(), timed_out)
+    }
+
+    /// Whether the backend was reached but gave no answer in time — as opposed to not being
+    /// reached at all (not running, its port closed) or a request that could not be made.
+    pub fn is_timeout(&self) -> bool {
+        self.1
+    }
+}
 
 impl fmt::Display for TransportError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -90,6 +107,8 @@ impl std::error::Error for TransportError {}
 pub struct Stream {
     /// The answer's status. A status outside 2xx streams its body like any other.
     pub status: u16,
+    /// Every header the backend sent, as [`Response::headers`] holds them.
+    pub headers: Vec<(String, String)>,
     body: std::io::BufReader<ureq::BodyReader<'static>>,
     connection: Arc<Connection>,
 }
@@ -98,6 +117,14 @@ impl Stream {
     /// Whether the status is 2xx.
     pub fn is_success(&self) -> bool {
         (200..300).contains(&self.status)
+    }
+
+    /// The first value of the header `name`, compared without regard to case.
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
 
     /// A handle that ends this stream from any thread — when the view that shows it goes away, or
@@ -448,24 +475,7 @@ impl Client {
         json: Option<&str>,
         headers: &[(&str, &str)],
     ) -> Result<Response, TransportError> {
-        let method = ureq::http::Method::from_bytes(method.as_bytes())
-            .map_err(|_| TransportError(format!("not an HTTP method: {method:?}")))?;
-        let mut request = ureq::http::Request::builder()
-            .method(method)
-            .uri(self.url(path))
-            .header("Authorization", &self.authorization);
-        for (name, value) in headers {
-            if name.eq_ignore_ascii_case("authorization") {
-                return Err(TransportError(
-                    "the Authorization header is the client's own".to_owned(),
-                ));
-            }
-            let name = ureq::http::HeaderName::from_bytes(name.as_bytes())
-                .map_err(|_| TransportError(format!("not a header name: {name:?}")))?;
-            let value = ureq::http::HeaderValue::from_str(value)
-                .map_err(|_| TransportError(format!("not a header value for {name}")))?;
-            request = request.header(name, value);
-        }
+        let request = self.request(method, path, headers)?;
         let response = match json {
             Some(json) => request
                 .header("Content-Type", "application/json")
@@ -478,6 +488,117 @@ impl Client {
                 .and_then(|request| self.run(request)),
         };
         self.read(response)
+    }
+
+    /// Sends `method` to `path` with `body` as `(content type, bytes)` and `headers`, and reads the
+    /// whole answer as bytes — what a relay passes on without reading it.
+    #[cfg(feature = "relay")]
+    pub(crate) fn exchange(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<(&str, &[u8])>,
+        headers: &[(&str, &str)],
+    ) -> Result<RawResponse, TransportError> {
+        let request = self.request(method, path, headers)?;
+        let mut response = match body {
+            Some((content_type, bytes)) => request
+                .header("Content-Type", content_type)
+                .body(bytes.to_vec())
+                .map_err(ureq::Error::from)
+                .and_then(|request| self.run(request)),
+            None => request
+                .body(())
+                .map_err(ureq::Error::from)
+                .and_then(|request| self.run(request)),
+        }
+        .map_err(TransportError::from_ureq)?;
+        let status = response.status().as_u16();
+        let headers = header_pairs(response.headers());
+        let body = response
+            .body_mut()
+            .with_config()
+            .limit(self.body_limit)
+            .read_to_vec()
+            .map_err(TransportError::from_ureq)?;
+        Ok(RawResponse {
+            status,
+            headers,
+            body,
+        })
+    }
+
+    /// As [`Client::exchange`], with the answer read as it arrives.
+    #[cfg(feature = "relay")]
+    pub(crate) fn exchange_stream(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<(&str, &[u8])>,
+        headers: &[(&str, &str)],
+    ) -> Result<Stream, TransportError> {
+        let (agent, connection) = self.stream_agent();
+        let request = self.request(method, path, headers)?;
+        let response = match body {
+            Some((content_type, bytes)) => request
+                .header("Content-Type", content_type)
+                .body(bytes.to_vec())
+                .map_err(ureq::Error::from)
+                .and_then(|request| self.run_stream(&agent, request)),
+            None => request
+                .body(())
+                .map_err(ureq::Error::from)
+                .and_then(|request| self.run_stream(&agent, request)),
+        };
+        self.stream(response, connection)
+    }
+
+    /// Runs an http-crate request for a streamed answer, with the timeouts [`Client::prepare_stream`] sets.
+    #[cfg(feature = "relay")]
+    fn run_stream<S: ureq::AsSendBody>(
+        &self,
+        agent: &ureq::Agent,
+        request: ureq::http::Request<S>,
+    ) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
+        let timeout = Some(self.timeout.unwrap_or(self.request_timeout));
+        let request = agent
+            .configure_request(request)
+            .timeout_global(None)
+            .timeout_connect(timeout)
+            .timeout_send_request(timeout)
+            .timeout_send_body(timeout)
+            .timeout_recv_response(timeout)
+            .build();
+        agent.run(request)
+    }
+
+    /// A request to `path` carrying the credential and `headers` — `Authorization` is the client's
+    /// own, and a name or value HTTP does not allow is refused before anything is sent.
+    fn request(
+        &self,
+        method: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<ureq::http::request::Builder, TransportError> {
+        let method = ureq::http::Method::from_bytes(method.as_bytes())
+            .map_err(|_| TransportError::new(format!("not an HTTP method: {method:?}")))?;
+        let mut request = ureq::http::Request::builder()
+            .method(method)
+            .uri(self.url(path))
+            .header("Authorization", &self.authorization);
+        for (name, value) in headers {
+            if name.eq_ignore_ascii_case("authorization") {
+                return Err(TransportError::new(
+                    "the Authorization header is the client's own".to_owned(),
+                ));
+            }
+            let name = ureq::http::HeaderName::from_bytes(name.as_bytes())
+                .map_err(|_| TransportError::new(format!("not a header name: {name:?}")))?;
+            let value = ureq::http::HeaderValue::from_str(value)
+                .map_err(|_| TransportError::new(format!("not a header value for {name}")))?;
+            request = request.header(name, value);
+        }
+        Ok(request)
     }
 
     /// GET `path` (starting with `/`) and read the answer as it arrives — an event feed, the shape
@@ -560,8 +681,9 @@ impl Client {
         response: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
         connection: Arc<Connection>,
     ) -> Result<Stream, TransportError> {
-        let response = response.map_err(|e| TransportError(e.to_string()))?;
+        let response = response.map_err(TransportError::from_ureq)?;
         let status = response.status().as_u16();
+        let headers = header_pairs(response.headers());
         let body = response
             .into_body()
             .into_with_config()
@@ -569,6 +691,7 @@ impl Client {
             .reader();
         Ok(Stream {
             status,
+            headers,
             body: std::io::BufReader::new(body),
             connection,
         })
@@ -578,27 +701,40 @@ impl Client {
         &self,
         response: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
     ) -> Result<Response, TransportError> {
-        let mut response = response.map_err(|e| TransportError(e.to_string()))?;
+        let mut response = response.map_err(TransportError::from_ureq)?;
         let status = response.status().as_u16();
-        let headers = response
-            .headers()
-            .iter()
-            .filter_map(|(name, value)| {
-                Some((name.as_str().to_owned(), value.to_str().ok()?.to_owned()))
-            })
-            .collect();
+        let headers = header_pairs(response.headers());
         let body = response
             .body_mut()
             .with_config()
             .limit(self.body_limit)
             .read_to_string()
-            .map_err(|e| TransportError(e.to_string()))?;
+            .map_err(TransportError::from_ureq)?;
         Ok(Response {
             status,
             headers,
             body,
         })
     }
+}
+
+/// Every header of an answer as `(name, value)`, a value that is not valid UTF-8 left out.
+fn header_pairs(headers: &ureq::http::HeaderMap) -> Vec<(String, String)> {
+    headers
+        .iter()
+        .filter_map(|(name, value)| {
+            Some((name.as_str().to_owned(), value.to_str().ok()?.to_owned()))
+        })
+        .collect()
+}
+
+/// An answer with its body as bytes, for a relay that passes it on unread.
+#[cfg(feature = "relay")]
+#[derive(Debug, Clone)]
+pub(crate) struct RawResponse {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
 }
 
 #[cfg(test)]

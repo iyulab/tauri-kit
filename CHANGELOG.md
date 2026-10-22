@@ -7,6 +7,24 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- `tauri-kit-sidecar` (`relay` feature): a web page's way to a loopback backend through the app, without the page ever
+  holding the backend's credential. `Relay::builder(source)` takes where the endpoint comes from (`move || discover(&path)`
+  for a backend that publishes a discovery file), `.origin(..)` the page origins it answers, `.allow(method, template)` and
+  `.allow_stream(method, template)` the routes (`{name}` is one segment — never empty, `.` or `..`, encoded or not; a
+  `?key&key` tail names the query keys a route takes) and `.timeout_for(method, template, duration)` a route's own time
+  limit. `relay.handle(http::Request<Vec<u8>>)` answers `http::Response<Body>`: the backend's status, `Content-Type` and
+  body as bytes (`Body::Full`), or for a stream route a 2xx answer read as it arrives (`Body::Stream`, chunk by chunk, with
+  a closer for another thread); a preflight from a named origin is answered, every answer to a named origin carries the
+  CORS headers, and none is cached. A 401 reads the source again and repeats the call once; a call that reached nothing
+  is not repeated, and the next one reads the source again. The relay's own refusals are RFC 9457 problems with a
+  `reason`: `origin-refused` and `route-refused` (403, before any call), `backend-unreachable` (503), `backend-timeout`
+  (504). It holds no web view type, so an app connects it to its URI scheme handler and carries streams the way its web
+  view allows.
+- `tauri-kit-sidecar` (`loopback-client`): `TransportError::is_timeout` tells a backend that answered too late from one
+  that was not reached; `Stream::headers` and `Stream::header` carry a streamed answer's headers, as `Response` does.
+
 ## [0.25.0] - 2026-10-22
 
 ### Added

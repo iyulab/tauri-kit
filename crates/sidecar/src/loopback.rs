@@ -14,6 +14,8 @@
 //! Either way the app ends up with an [`Endpoint`] — the address and the authorization header, apart
 //! from any HTTP client, so an app with its own (async) client uses that. With the `loopback-client`
 //! feature, [`Client`] is a blocking one that carries the token and never goes through a proxy.
+//! With the `relay` feature, [`relay::Relay`] is the app's web page's way to the backend: the page
+//! asks in HTTP's shape and never holds the credential.
 //!
 //! The variable's name, the readiness line's prefix and every path are the app's. The .NET host side
 //! of the same arrangement is the `TauriKit.Sidecar.Loopback.AspNetCore` package in this
@@ -43,6 +45,8 @@ use crate::{LineReadiness, Output, Sidecar, Sink};
 #[cfg(feature = "loopback-client")]
 mod client;
 mod discovery;
+#[cfg(feature = "relay")]
+pub mod relay;
 
 #[cfg(feature = "loopback-client")]
 pub use client::{Client, ClientOptions, Response, Stream, StreamCloser, TransportError};
