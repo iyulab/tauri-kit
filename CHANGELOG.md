@@ -7,6 +7,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- `tauri-kit-webview`: `caption::MaximizeButton` keeps Windows 11's Snap Layouts on a maximize button the web page draws, in
+  a window without the system caption. The flyout appears only when the window under the cursor answers the non-client hit
+  test as a maximize button, and in a WebView2 window that window belongs to the browser process; the block places an
+  input-sink child window of the app's own window over the button's rectangle (client pixels, given and kept current by the
+  caller): it answers `HTMAXBUTTON`, a click on it maximizes or restores the window, a right-click opens the window's system
+  menu, the window's top resize band is passed on, and it reports `ButtonEvent`s (enter, leave, down, up) so the page can
+  draw hover and pressed. Windows only; elsewhere it does nothing.
+
 ## [0.25.0] - 2026-10-22
 
 ### Added

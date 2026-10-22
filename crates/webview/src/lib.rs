@@ -39,9 +39,15 @@
 //!   windows and external schemes, with the document request stopped before it leaves. See the
 //!   [`lock`] module for what it does not cover.
 //!
+//! A fifth is for windows whose page draws the title bar:
+//!
+//! - **Keep Snap Layouts on the page's maximize button.** [`caption::MaximizeButton`] places an input-sink window over the
+//!   button so Windows 11 shows its window-snapping flyout there, as it does over a system caption.
+//!
 //! On macOS and Linux the system web view is part of the operating system: [`runtime`] answers
 //! [`Runtime::System`] and there is no profile to clear.
 
+pub mod caption;
 pub mod lock;
 
 #[cfg(windows)]

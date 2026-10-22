@@ -30,7 +30,8 @@ the failures are quiet, platform-specific, and found late:
   the events the app declares in closed kinds (a choice among declared values, a bucketed count, a
   duration) — never what any of it was about, kept where the person can read it before anything is sent
 - **The web view under the window** — saying so when the runtime is missing, keeping form entries out
-  of its profile, keeping a window that shows untrusted content on its own origins
+  of its profile, keeping a window that shows untrusted content on its own origins, keeping the system's
+  window-snapping flyout on a maximize button the page draws
 - **The person's languages** — which UI languages they prefer, in their order, before any window
   exists (the words themselves stay the app's)
 
