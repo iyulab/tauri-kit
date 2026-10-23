@@ -175,16 +175,22 @@ impl Sink {
     /// (`ai.session.id`), the app's version and the platform, so the resource's users, sessions
     /// and page views read them. A start or an unfinished session is one event telemetry item
     /// (`SessionStart` with the language and track as properties, `SessionUnfinished` with when it
-    /// started); an end is one event item (`SessionEnd` with its length in seconds as a
-    /// measurement) and one page view item for each screen, whose duration is the time on it and
-    /// whose `opened` measurement is how many times it was opened.
+    /// started and the screen open when it went as `lastScreen`); an end is one event item
+    /// (`SessionEnd` with its length in seconds as a measurement); an end and an unfinished session
+    /// add one page view item for each screen, whose duration is the time on it and whose `opened`
+    /// measurement is how many times it was opened. The OS version, when the session carries it,
+    /// goes into `ai.device.osVersion` between the system and the architecture.
     pub fn session_items(&self, event: &SessionEvent) -> Vec<serde_json::Value> {
         let (os, arch) = event.platform();
+        let platform = match event.os_version() {
+            Some(version) => format!("{os} {version} {arch}"),
+            None => format!("{os} {arch}"),
+        };
         let mut tags = serde_json::json!({
             "ai.user.id": event.install(),
             "ai.session.id": event.session(),
             "ai.application.ver": event.version(),
-            "ai.device.osVersion": format!("{os} {arch}"),
+            "ai.device.osVersion": platform,
         });
         if let Some(locale) = event.locale() {
             tags["ai.device.locale"] = locale.into();
@@ -211,6 +217,20 @@ impl Sink {
                     }),
                 )
             };
+        let pages = || {
+            event.screens().iter().map(|(name, time)| {
+                item(
+                    "Microsoft.ApplicationInsights.PageView",
+                    "PageViewData",
+                    serde_json::json!({
+                        "ver": 2,
+                        "name": name,
+                        "duration": timespan(time.seconds),
+                        "measurements": { "opened": time.opened },
+                    }),
+                )
+            })
+        };
         match event.kind() {
             SessionKind::Start => vec![custom(
                 "SessionStart",
@@ -225,29 +245,23 @@ impl Sink {
                 if event.version_changed() {
                     properties["versionChanged"] = "true".into();
                 }
-                vec![custom(
+                if let Some(screen) = event.last_screen() {
+                    properties["lastScreen"] = screen.into();
+                }
+                std::iter::once(custom(
                     "SessionUnfinished",
                     properties,
                     serde_json::json!({}),
-                )]
+                ))
+                .chain(pages())
+                .collect()
             }
             SessionKind::End => std::iter::once(custom(
                 "SessionEnd",
                 serde_json::json!({}),
                 serde_json::json!({ "seconds": event.seconds().unwrap_or(0) }),
             ))
-            .chain(event.screens().iter().map(|(name, time)| {
-                item(
-                    "Microsoft.ApplicationInsights.PageView",
-                    "PageViewData",
-                    serde_json::json!({
-                        "ver": 2,
-                        "name": name,
-                        "duration": timespan(time.seconds),
-                        "measurements": { "opened": time.opened },
-                    }),
-                )
-            }))
+            .chain(pages())
             .collect(),
         }
     }
@@ -493,6 +507,43 @@ mod tests {
         assert_eq!(
             items[0]["data"]["baseData"]["properties"],
             serde_json::json!({ "started": "2026-10-07T23:00:00Z", "how": "os_session_end", "versionChanged": "true" })
+        );
+    }
+
+    #[test]
+    fn where_an_unfinished_session_went_goes_out_with_it_and_the_os_version_in_the_platform() {
+        let unfinished = session_event(serde_json::json!({
+            "event": "unfinished", "started": "2026-10-07T23:00:00Z", "os_version": "10.0.26100",
+            "last_screen": "report", "screens": { "home": { "opened": 1, "seconds": 4 }, "report": { "opened": 2, "seconds": 30 } },
+        }));
+        let items = sink().session_items(&unfinished);
+        assert_eq!(items.len(), 3);
+        assert_eq!(
+            items[0]["data"]["baseData"]["properties"]["lastScreen"],
+            "report"
+        );
+        let pages: Vec<_> = items[1..]
+            .iter()
+            .map(|i| {
+                (
+                    i["data"]["baseData"]["name"].clone(),
+                    i["data"]["baseData"]["measurements"]["opened"].clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            pages,
+            [("home".into(), 1.into()), ("report".into(), 2.into())]
+        );
+        assert!(items
+            .iter()
+            .all(|i| i["tags"]["ai.device.osVersion"] == "windows 10.0.26100 x86_64"));
+        let without = session_event(
+            serde_json::json!({ "event": "unfinished", "started": "2026-10-07T23:00:00Z" }),
+        );
+        assert_eq!(
+            sink().session_items(&without)[0]["tags"]["ai.device.osVersion"],
+            "windows x86_64"
         );
     }
 

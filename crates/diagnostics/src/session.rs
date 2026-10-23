@@ -117,6 +117,7 @@ pub struct SessionEvent {
     started: Option<String>,
     seconds: Option<u64>,
     screens: BTreeMap<String, ScreenTime>,
+    last_screen: Option<String>,
     how: Option<Ended>,
     version_changed: bool,
 }
@@ -145,6 +146,12 @@ impl SessionEvent {
     /// The operating system and CPU architecture, as [`std::env::consts`] names them.
     pub fn platform(&self) -> (&str, &str) {
         (&self.head.os, &self.head.arch)
+    }
+
+    /// The operating system's version — numbers only (`10.0.26100`, `26.1`) — when the app asked
+    /// for it ([`SessionBuilder::os_version`]).
+    pub fn os_version(&self) -> Option<&str> {
+        self.head.os_version.as_deref()
     }
 
     /// When the event happened, in UTC to the second (ISO 8601).
@@ -184,9 +191,18 @@ impl SessionEvent {
         self.version_changed
     }
 
-    /// The time on each screen, for an end.
+    /// The time on each screen: for an end, all of it; for an unfinished session, what its marker
+    /// last said — up to the last time a screen changed (empty on a line written before this was
+    /// recorded).
     pub fn screens(&self) -> &BTreeMap<String, ScreenTime> {
         &self.screens
+    }
+
+    /// For an unfinished session: the screen that was open when it went, as its marker last said —
+    /// one of the app's [`Screens`] or [`UNRECOGNIZED_KIND`]. `None` when none was (or on a line
+    /// written before this was recorded).
+    pub fn last_screen(&self) -> Option<&str> {
+        self.last_screen.as_deref()
     }
 }
 
@@ -199,6 +215,8 @@ struct Head {
     version: String,
     os: String,
     arch: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    os_version: Option<String>,
 }
 
 impl Head {
@@ -208,6 +226,7 @@ impl Head {
             && is_version(&self.version)
             && is_platform(&self.os)
             && is_platform(&self.arch)
+            && self.os_version.as_deref().is_none_or(is_os_version)
     }
 }
 
@@ -221,6 +240,8 @@ struct Line {
     version: String,
     os: String,
     arch: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    os_version: Option<String>,
     time: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     locale: Option<String>,
@@ -232,6 +253,8 @@ struct Line {
     seconds: Option<u64>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     screens: BTreeMap<String, ScreenTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_screen: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     how: Option<Ended>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -247,12 +270,14 @@ impl From<SessionEvent> for Line {
             version: e.head.version,
             os: e.head.os,
             arch: e.head.arch,
+            os_version: e.head.os_version,
             time: e.time,
             locale: e.locale,
             track: e.track,
             started: e.started,
             seconds: e.seconds,
             screens: e.screens,
+            last_screen: e.last_screen,
             how: e.how,
             version_changed: e.version_changed,
         }
@@ -271,6 +296,7 @@ impl TryFrom<Line> for SessionEvent {
                 version: l.version,
                 os: l.os,
                 arch: l.arch,
+                os_version: l.os_version,
             },
             time: l.time,
             locale: l.locale,
@@ -278,6 +304,7 @@ impl TryFrom<Line> for SessionEvent {
             started: l.started,
             seconds: l.seconds,
             screens: l.screens,
+            last_screen: l.last_screen,
             how: l.how,
             version_changed: l.version_changed,
         };
@@ -299,6 +326,7 @@ impl SessionEvent {
                     && self.started.is_none()
                     && self.seconds.is_none()
                     && self.screens.is_empty()
+                    && self.last_screen.is_none()
                     && self.how.is_none()
                     && !self.version_changed
             }
@@ -309,6 +337,7 @@ impl SessionEvent {
                     && self.seconds.is_some()
                     && self.screens.len() <= MAX_SCREENS
                     && self.screens.keys().all(|name| is_plain(name))
+                    && self.last_screen.is_none()
                     && self.how.is_none()
                     && !self.version_changed
             }
@@ -317,7 +346,9 @@ impl SessionEvent {
                     && self.track.is_none()
                     && self.started.as_deref().is_some_and(is_time)
                     && self.seconds.is_none()
-                    && self.screens.is_empty()
+                    && self.screens.len() <= MAX_SCREENS
+                    && self.screens.keys().all(|name| is_plain(name))
+                    && self.last_screen.as_deref().is_none_or(is_plain)
             }
         };
         fields && self.head.is_valid() && is_time(&self.time)
@@ -334,6 +365,12 @@ struct Running {
     started: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     ending: Option<Ended>,
+    /// The screen open when the marker was last written, and the time on screens until then — so a
+    /// session that goes without ending still says where it was ([`SessionEvent::last_screen`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    screen: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    screens: BTreeMap<String, ScreenTime>,
 }
 
 /// The session of one launch: written to a JSON Lines file the person can read — exactly what
@@ -390,6 +427,31 @@ struct Clock {
     open: Option<(String, Instant)>,
     totals: BTreeMap<String, (u32, std::time::Duration)>,
     ended: bool,
+    /// What the session said of how it is about to go ([`Session::say`]) — kept so a later marker
+    /// write keeps it.
+    ending: Option<Ended>,
+}
+
+impl Clock {
+    /// Time on each screen as of `now`, the open one counted until then.
+    fn times(&self, now: Instant) -> BTreeMap<String, ScreenTime> {
+        self.totals
+            .iter()
+            .map(|(name, (opened, time))| {
+                let open = match &self.open {
+                    Some((o, since)) if o == name => now.saturating_duration_since(*since),
+                    _ => std::time::Duration::ZERO,
+                };
+                (
+                    name.clone(),
+                    ScreenTime {
+                        opened: *opened,
+                        seconds: (*time + open).as_secs(),
+                    },
+                )
+            })
+            .collect()
+    }
 }
 
 /// What a session starts with: see [`Session::builder`].
@@ -416,6 +478,7 @@ impl Session {
                 },
                 os: std::env::consts::OS.to_string(),
                 arch: std::env::consts::ARCH.to_string(),
+                os_version: None,
             },
             locale: "und".to_string(),
             track: "default".to_string(),
@@ -472,6 +535,26 @@ impl Session {
                 clock.open = Some((name, now));
             }
         }
+        // The marker says where the session is, in case it goes without ending. A screen change is
+        // rare enough to write it each time; a write that fails only leaves the marker one change
+        // behind.
+        let _ = self.write_marker(&clock, now);
+    }
+
+    /// Rewrites the marker whole from `clock`: the head, when the session started, how it is about to
+    /// go, and the screens so far.
+    fn write_marker(&self, clock: &Clock, now: Instant) -> io::Result<()> {
+        let running = Running {
+            head: self.head.clone(),
+            started: self.started_at.clone(),
+            ending: clock.ending,
+            screen: clock.open.as_ref().map(|(name, _)| name.clone()),
+            screens: clock.times(now),
+        };
+        tauri_kit_fs::write_atomic(
+            &self.marker,
+            &serde_json::to_vec(&running).map_err(io::Error::other)?,
+        )
     }
 
     /// Says that the operating system is ending the person's session (shutdown, restart, sign-out)
@@ -493,18 +576,12 @@ impl Session {
 
     /// Writes into the marker how the session is about to go, unless it has already ended.
     fn say(&self, ending: Ended) -> io::Result<()> {
-        if self.clock.lock().unwrap_or_else(|e| e.into_inner()).ended {
+        let mut clock = self.clock.lock().unwrap_or_else(|e| e.into_inner());
+        if clock.ended {
             return Ok(());
         }
-        let running = Running {
-            head: self.head.clone(),
-            started: self.started_at.clone(),
-            ending: Some(ending),
-        };
-        tauri_kit_fs::write_atomic(
-            &self.marker,
-            &serde_json::to_vec(&running).map_err(io::Error::other)?,
-        )
+        clock.ending = Some(ending);
+        self.write_marker(&clock, Instant::now())
     }
 
     /// Ends the session as it should: writes how long it lasted and the time on each screen, and
@@ -525,19 +602,7 @@ impl Session {
         self.screen_at(None, now);
         let mut clock = self.clock.lock().unwrap_or_else(|e| e.into_inner());
         clock.ended = true;
-        let screens = clock
-            .totals
-            .iter()
-            .map(|(name, (opened, time))| {
-                (
-                    name.clone(),
-                    ScreenTime {
-                        opened: *opened,
-                        seconds: time.as_secs(),
-                    },
-                )
-            })
-            .collect();
+        let screens = clock.times(now);
         drop(clock);
         let end = SessionEvent {
             kind: SessionKind::End,
@@ -548,6 +613,7 @@ impl Session {
             started: None,
             seconds: Some(now.saturating_duration_since(self.started).as_secs()),
             screens,
+            last_screen: None,
             how: None,
             version_changed: false,
         };
@@ -637,6 +703,16 @@ impl SessionBuilder {
         self
     }
 
+    /// Adds the operating system's version to every event of the session — numbers only: the
+    /// major, minor and build of Windows (`10.0.26100`), the macOS product version (`26.1`), the
+    /// leading numbers of a Linux kernel release (`6.8.0`). Off by default: it is one more fact
+    /// about the device, so an app turns it on when what it tells people it sends says so. Left
+    /// out when the version cannot be read.
+    pub fn os_version(mut self) -> Self {
+        self.head.os_version = current_os_version().filter(|v| is_os_version(v));
+        self
+    }
+
     /// Starts the session: appends to `file` each session in the folder `running` that did not end
     /// and whose process is gone, then this session's start, and keeps its own marker and lock in
     /// `running` until [`Session::end`]. Give every process of the app that starts sessions the same
@@ -667,7 +743,8 @@ impl SessionBuilder {
                 track: None,
                 started: Some(before.started),
                 seconds: None,
-                screens: BTreeMap::new(),
+                screens: before.screens,
+                last_screen: before.screen,
                 how: Some(before.ending.unwrap_or(Ended::Unfinished)),
                 version_changed,
             };
@@ -684,6 +761,7 @@ impl SessionBuilder {
             started: None,
             seconds: None,
             screens: BTreeMap::new(),
+            last_screen: None,
             how: None,
             version_changed: false,
         };
@@ -696,6 +774,8 @@ impl SessionBuilder {
             head: head.clone(),
             started: now.clone(),
             ending: None,
+            screen: None,
+            screens: BTreeMap::new(),
         };
         tauri_kit_fs::write_atomic(
             &marker,
@@ -737,6 +817,70 @@ pub(crate) fn is_version(raw: &str) -> bool {
         && raw
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+' | '_'))
+}
+
+/// An operating system's version: 1 to 4 numbers of 1 to 10 digits, joined by `.`.
+pub(crate) fn is_os_version(raw: &str) -> bool {
+    let parts: Vec<_> = raw.split('.').collect();
+    (1..=4).contains(&parts.len())
+        && parts
+            .iter()
+            .all(|p| (1..=10).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// The running operating system's version, read from the system itself (Windows `RtlGetVersion` —
+/// not the compatibility-shimmed `GetVersionEx` — macOS `kern.osproductversion`, Linux
+/// `/proc/sys/kernel/osrelease`).
+#[cfg(windows)]
+fn current_os_version() -> Option<String> {
+    use windows_sys::Wdk::System::SystemServices::RtlGetVersion;
+    use windows_sys::Win32::System::SystemInformation::OSVERSIONINFOW;
+    // SAFETY: a zeroed OSVERSIONINFOW with its size set is what RtlGetVersion fills.
+    let mut info: OSVERSIONINFOW = unsafe { std::mem::zeroed() };
+    info.dwOSVersionInfoSize = std::mem::size_of::<OSVERSIONINFOW>() as u32;
+    (unsafe { RtlGetVersion(&mut info) } == 0).then(|| {
+        format!(
+            "{}.{}.{}",
+            info.dwMajorVersion, info.dwMinorVersion, info.dwBuildNumber
+        )
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn current_os_version() -> Option<String> {
+    let mut buffer = [0u8; 64];
+    let mut size = buffer.len();
+    // SAFETY: the name is NUL-terminated and the buffer's size is passed with it.
+    let read = unsafe {
+        libc::sysctlbyname(
+            c"kern.osproductversion".as_ptr(),
+            buffer.as_mut_ptr().cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    (read == 0).then(|| {
+        String::from_utf8_lossy(&buffer[..size])
+            .trim_end_matches('\0')
+            .to_string()
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn current_os_version() -> Option<String> {
+    let release = std::fs::read_to_string("/proc/sys/kernel/osrelease").ok()?;
+    let numbers: String = release
+        .trim()
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    Some(numbers.trim_end_matches('.').to_string())
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+fn current_os_version() -> Option<String> {
+    None
 }
 
 /// An operating system or architecture name: ASCII letters, digits and `_`, 1 to 32 of them.
@@ -1028,6 +1172,125 @@ mod tests {
     }
 
     #[test]
+    fn an_unfinished_session_says_the_screen_it_was_on_and_its_time_on_screens_until_then() {
+        let dir = tempfile::tempdir().unwrap();
+        let (file, marker, id) = paths(&dir);
+        let install = InstallId::load_or_create(&id).unwrap();
+        let start = || {
+            Session::builder(&install, "1.2.3")
+                .screens(screens())
+                .start(&file, &marker)
+                .unwrap()
+        };
+        let session = start();
+        let t0 = Instant::now();
+        session.screen_at(Some("home"), t0);
+        session.screen_at(Some("list"), t0 + Duration::from_secs(5));
+        session.screen_at(Some("home"), t0 + Duration::from_secs(7));
+        session.screen_at(Some("/a/path"), t0 + Duration::from_secs(10));
+        session.os_ending().unwrap(); // a later marker write keeps the screens; the screen change after keeps «how»
+        session.screen_at(Some("report"), t0 + Duration::from_secs(12));
+        drop(session);
+        start();
+
+        let unfinished = lines(&file)
+            .into_iter()
+            .find(|l| l["event"] == "unfinished")
+            .unwrap();
+        assert_eq!(unfinished["last_screen"], "report");
+        assert_eq!(unfinished["how"], "os_session_end");
+        assert_eq!(
+            unfinished["screens"]["home"],
+            serde_json::json!({ "opened": 2, "seconds": 8 })
+        );
+        assert_eq!(
+            unfinished["screens"]["list"],
+            serde_json::json!({ "opened": 1, "seconds": 2 })
+        );
+        assert_eq!(unfinished["screens"][UNRECOGNIZED_KIND]["opened"], 1);
+        assert_eq!(unfinished["screens"]["report"]["opened"], 1);
+
+        // A session that never said a screen goes as before: no screen, no time.
+        let quiet = tempfile::tempdir().unwrap();
+        let (file, marker, _) = paths(&quiet);
+        drop(
+            Session::builder(&install, "1.2.3")
+                .start(&file, &marker)
+                .unwrap(),
+        );
+        Session::builder(&install, "1.2.3")
+            .start(&file, &marker)
+            .unwrap();
+        let line = &lines(&file)[1];
+        assert!(
+            line.get("last_screen").is_none() && line.get("screens").is_none(),
+            "{line}"
+        );
+    }
+
+    #[test]
+    fn the_os_version_is_added_only_when_the_app_asks_and_only_as_numbers() {
+        let dir = tempfile::tempdir().unwrap();
+        let (file, marker, id) = paths(&dir);
+        let install = InstallId::load_or_create(&id).unwrap();
+        Session::builder(&install, "1.2.3")
+            .start(&file, &marker)
+            .unwrap()
+            .end()
+            .unwrap();
+        Session::builder(&install, "1.2.3")
+            .os_version()
+            .start(&file, &marker)
+            .unwrap()
+            .end()
+            .unwrap();
+        let written = lines(&file);
+        assert!(written[..2].iter().all(|l| l.get("os_version").is_none()));
+        if cfg!(any(windows, target_os = "macos", target_os = "linux")) {
+            let version = written[2]["os_version"].as_str().unwrap();
+            assert!(is_os_version(version), "{version}");
+            assert_eq!(written[3]["os_version"], version);
+        }
+        for good in ["10.0.26100", "26.1", "6"] {
+            assert!(is_os_version(good), "{good}");
+        }
+        for bad in [
+            "",
+            "10.0.26100.1.2",
+            "Windows 11",
+            "26.1 beta",
+            "1..2",
+            "12345678901",
+        ] {
+            assert!(!is_os_version(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn where_a_session_went_belongs_to_an_unfinished_session_and_keeps_to_the_rules() {
+        let base = |extra: serde_json::Value| {
+            let mut line = serde_json::json!({
+                "install": "0123456789abcdef0123456789abcdef", "session": "fedcba9876543210fedcba9876543210",
+                "version": "1.2.3", "os": "windows", "arch": "x86_64", "time": "2026-10-08T09:00:00Z",
+            });
+            line.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            serde_json::from_value::<SessionEvent>(line)
+        };
+        let started = "2026-10-08T08:00:00Z";
+        let time = serde_json::json!({ "home": { "opened": 1, "seconds": 3 } });
+        assert!(base(serde_json::json!({"event": "unfinished", "started": started, "last_screen": "home", "screens": time})).is_ok());
+        assert!(base(serde_json::json!({"event": "unfinished", "started": started, "last_screen": "Kim's notes"})).is_err());
+        assert!(base(serde_json::json!({"event": "unfinished", "started": started, "screens": { "C:/x": { "opened": 1, "seconds": 3 } }})).is_err());
+        assert!(
+            base(serde_json::json!({"event": "end", "seconds": 5, "last_screen": "home"})).is_err()
+        );
+        assert!(base(serde_json::json!({"event": "start", "locale": "en", "track": "default", "os_version": "10.0.26100"})).is_ok());
+        assert!(base(serde_json::json!({"event": "start", "locale": "en", "track": "default", "os_version": "Windows 11 Pro"})).is_err());
+    }
+
+    #[test]
     fn another_version_after_a_crash_is_still_a_crash_and_says_the_version_changed() {
         let dir = tempfile::tempdir().unwrap();
         let (file, marker, id) = paths(&dir);
@@ -1095,8 +1358,20 @@ mod tests {
             assert!(!text.contains("Kim") && !text.contains("Users"), "{text}");
             let keys: BTreeSet<_> = line.as_object().unwrap().keys().cloned().collect();
             let allowed: BTreeSet<String> = [
-                "event", "install", "session", "version", "os", "arch", "time", "locale", "track",
-                "started", "seconds", "screens",
+                "event",
+                "install",
+                "session",
+                "version",
+                "os",
+                "arch",
+                "time",
+                "locale",
+                "track",
+                "started",
+                "seconds",
+                "screens",
+                "last_screen",
+                "os_version",
             ]
             .map(String::from)
             .into();

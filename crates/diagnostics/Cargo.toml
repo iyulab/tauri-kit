@@ -21,6 +21,13 @@ tauri-kit-state = { path = "../state", version = "0.27.0" }
 # the handshake is the feature's choice (below).
 ureq = { version = "3", default-features = false, features = ["win-system-proxy"], optional = true }
 
+# The operating system's version, read from the system (`SessionBuilder::os_version` — opt-in).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Wdk_System_SystemServices", "Win32_System_SystemInformation"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tempfile = "3"
 

@@ -7,6 +7,23 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- `tauri-kit-diagnostics`: a session that goes without ending now says where it was. Each `Session::screen` change
+  rewrites the running marker with the screen open and the time on screens so far, and the `unfinished` line the next
+  session records carries them as `last_screen` (one of the app's `Screens` or `unrecognized`) and `screens` — up to the
+  last screen change. `Sink::session_items` sends `lastScreen` with `SessionUnfinished` and a page view for each screen,
+  as for an end. A session that never named a screen writes the same lines as before.
+- `tauri-kit-diagnostics`: `SessionBuilder::os_version()` adds the operating system's version to the session's lines as
+  `os_version` — numbers only (`10.0.26100` from `RtlGetVersion` on Windows, `26.1` from `kern.osproductversion` on
+  macOS, the leading numbers of the kernel release on Linux) — and `Sink` puts it in `ai.device.osVersion` between the
+  system and the architecture. Off unless the app asks: it is one more fact about the device.
+
+### Changed
+
+- `tauri-kit-diagnostics`: a running marker written by this version is not read by an earlier one (it has fields the
+  earlier version does not know), so going back to an earlier version after a crash loses that one unfinished line.
+
 ### Fixed
 
 - `tauri-kit-webview`: `lock_navigation` (Windows) answered every request it saw outside the allowed origins with a bare
