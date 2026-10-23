@@ -67,7 +67,17 @@ pub struct Started<T> {
     pub value: T,
 }
 
-/// How many times a sidecar that ended is started again.
+/// How many times a sidecar that ended is started again: at most `limit` starts within any
+/// `window`, failed starts included. There is no pause that grows between starts and no count that
+/// resets once the sidecar has run well for a while — when the starts are used up the sidecar stays
+/// down until the app calls [`Supervisor::restart`], which starts the count over.
+///
+/// The words are this crate's. A host process that supervises its own workers usually wants a
+/// different policy (pauses that lengthen, a count that resets after a stable run): that is another
+/// layer with another job, and the two are not meant to agree. What they share is the way the
+/// policy is pinned down: `tests/cases/supervision.json` in this crate lists start attempts against
+/// the start or stay-down each must get, and any implementation of this policy can run the same
+/// table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RestartPolicy {
     /// Starts allowed within [`window`](RestartPolicy::window), failed ones included. Once they are
@@ -83,6 +93,18 @@ impl RestartPolicy {
         limit: 0,
         window: Duration::ZERO,
     };
+
+    /// Whether a start at `now` is allowed after `starts` (the earlier ones, oldest first). A start
+    /// counts while it is less than `window` old, so one made exactly `window` ago no longer does.
+    /// When allowed, `now` joins `starts`; starts that left the window are dropped either way.
+    fn admit(&self, starts: &mut Vec<Instant>, now: Instant) -> bool {
+        starts.retain(|at| now.duration_since(*at) < self.window);
+        if starts.len() as u32 >= self.limit {
+            return false;
+        }
+        starts.push(now);
+        true
+    }
 }
 
 /// Three starts within five minutes.
@@ -455,8 +477,7 @@ impl<T: Clone + Send + 'static> Inner<T> {
                 return false;
             }
             let now = Instant::now();
-            starts.retain(|at| now.duration_since(*at) < self.restart.window);
-            if starts.len() as u32 >= self.restart.limit {
+            if !self.restart.admit(starts, now) {
                 self.set_state(State::Down);
                 // Cleared under the cycle lock, so a restart that follows sees it and watches again.
                 self.watching.store(false, Ordering::SeqCst);
@@ -467,7 +488,6 @@ impl<T: Clone + Send + 'static> Inner<T> {
                 return false;
             }
             self.set_state(State::Restarting);
-            starts.push(now);
             attempt += 1;
             match (self.launch)() {
                 Ok(next) => {
@@ -495,6 +515,39 @@ impl<T: Clone + Send + 'static> Inner<T> {
                         return false;
                     }
                 }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod cases {
+    //! The case table in `tests/cases/supervision.json`.
+    use super::RestartPolicy;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn the_supervision_table() {
+        let table: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/cases/supervision.json")).unwrap();
+        let cases = table["cases"].as_array().unwrap();
+        assert!(!cases.is_empty());
+        for case in cases {
+            let name = case["name"].as_str().unwrap();
+            let policy = RestartPolicy {
+                limit: case["limit"].as_u64().unwrap() as u32,
+                window: Duration::from_millis(case["window_ms"].as_u64().unwrap()),
+            };
+            let base = Instant::now();
+            let mut starts = Vec::new();
+            for step in case["steps"].as_array().unwrap() {
+                let at = base + Duration::from_millis(step["at_ms"].as_u64().unwrap());
+                let got = if policy.admit(&mut starts, at) {
+                    "start"
+                } else {
+                    "down"
+                };
+                assert_eq!(got, step["expect"].as_str().unwrap(), "{name} at {step}");
             }
         }
     }

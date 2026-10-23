@@ -1,0 +1,13 @@
+{
+  "about": "File retry window: an operation the OS refuses for a moment (a scanner, an indexer or a sync client holding the file) is tried again until `patience_ms` has passed. Each case is one operation that is refused for its first `refused_ms`, with a refusal that is `transient` (retried) or `other` (returned at once). `expect` is `ok` or `error`. A refusal that ends within the window is outlasted — the last attempt is made when the window closes — so the expectations hold whatever pauses an implementation takes between attempts; `attempts` is given only where every implementation must agree on it. No case waits past its window.",
+  "cases": [
+    { "name": "not refused: one attempt", "refusal": "transient", "refused_ms": 0, "patience_ms": 1000, "expect": "ok", "attempts": 1 },
+    { "name": "refused for a moment: outlasted", "refusal": "transient", "refused_ms": 150, "patience_ms": 1000, "expect": "ok" },
+    { "name": "refused for most of the window: outlasted", "refusal": "transient", "refused_ms": 950, "patience_ms": 1000, "expect": "ok" },
+    { "name": "refused until the window closes: the last attempt at its end succeeds", "refusal": "transient", "refused_ms": 1000, "patience_ms": 1000, "expect": "ok" },
+    { "name": "refused past the window: the refusal is returned", "refusal": "transient", "refused_ms": 3000, "patience_ms": 1000, "expect": "error" },
+    { "name": "any other error is returned at once", "refusal": "other", "refused_ms": 3000, "patience_ms": 1000, "expect": "error", "attempts": 1 },
+    { "name": "no patience: exactly one attempt", "refusal": "transient", "refused_ms": 100, "patience_ms": 0, "expect": "error", "attempts": 1 },
+    { "name": "no patience and not refused: one attempt", "refusal": "transient", "refused_ms": 0, "patience_ms": 0, "expect": "ok", "attempts": 1 }
+  ]
+}

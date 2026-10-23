@@ -1,0 +1,78 @@
+{
+  "about": "Restart policy: at most `limit` starts within any `window_ms`, failed starts included. Each step is one start the supervisor is about to make (the sidecar ended, or the previous start failed), at `at_ms` from the first. `expect` is `start` (allowed — it counts from now on) or `down` (not allowed — the sidecar stays down until the app restarts it, so no step follows a `down`). A start counts while it is less than `window_ms` old.",
+  "cases": [
+    {
+      "name": "the default: three starts in five minutes, then down",
+      "limit": 3,
+      "window_ms": 300000,
+      "steps": [
+        { "at_ms": 0, "expect": "start" },
+        { "at_ms": 10000, "expect": "start" },
+        { "at_ms": 20000, "expect": "start" },
+        { "at_ms": 30000, "expect": "down" }
+      ]
+    },
+    {
+      "name": "a crash on every start uses the starts up at once",
+      "limit": 3,
+      "window_ms": 300000,
+      "steps": [
+        { "at_ms": 0, "expect": "start" },
+        { "at_ms": 250, "expect": "start" },
+        { "at_ms": 500, "expect": "start" },
+        { "at_ms": 750, "expect": "down" }
+      ]
+    },
+    {
+      "name": "a start exactly one window old no longer counts",
+      "limit": 3,
+      "window_ms": 300000,
+      "steps": [
+        { "at_ms": 0, "expect": "start" },
+        { "at_ms": 100000, "expect": "start" },
+        { "at_ms": 200000, "expect": "start" },
+        { "at_ms": 300000, "expect": "start" }
+      ]
+    },
+    {
+      "name": "one millisecond short of the window it still counts",
+      "limit": 3,
+      "window_ms": 300000,
+      "steps": [
+        { "at_ms": 0, "expect": "start" },
+        { "at_ms": 100000, "expect": "start" },
+        { "at_ms": 200000, "expect": "start" },
+        { "at_ms": 299999, "expect": "down" }
+      ]
+    },
+    {
+      "name": "endings spread wider than the window never run out",
+      "limit": 2,
+      "window_ms": 60000,
+      "steps": [
+        { "at_ms": 0, "expect": "start" },
+        { "at_ms": 40000, "expect": "start" },
+        { "at_ms": 100000, "expect": "start" },
+        { "at_ms": 140000, "expect": "start" },
+        { "at_ms": 200000, "expect": "start" }
+      ]
+    },
+    {
+      "name": "no growing pause: a quick ending after a long quiet run still counts the starts in the window",
+      "limit": 2,
+      "window_ms": 60000,
+      "steps": [
+        { "at_ms": 0, "expect": "start" },
+        { "at_ms": 3600000, "expect": "start" },
+        { "at_ms": 3600100, "expect": "start" },
+        { "at_ms": 3600200, "expect": "down" }
+      ]
+    },
+    {
+      "name": "a limit of zero never starts it again",
+      "limit": 0,
+      "window_ms": 0,
+      "steps": [{ "at_ms": 0, "expect": "down" }]
+    }
+  ]
+}

@@ -15,6 +15,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   is read, so a stapled release passes with no network. A refusal says who signed (`Refused::OtherDeveloper` with the
   identifier and team) or carries the Security framework's status (`Refused::Untrusted`). Elsewhere it refuses every
   bundle with `Refused::Unsupported`. No new dependency: the Security framework is called directly.
+- `tauri-kit-sidecar`, `tauri-kit-fs`: case tables that pin down what the supervision and file-retry words mean, for
+  any implementation to run. `crates/sidecar/tests/cases/supervision.json` lists start attempts against the start or
+  stay-down `RestartPolicy` gives each (at most `limit` starts within any `window`, failed starts included; no growing
+  pause, no reset after a stable run). `crates/fs/tests/cases/file-retry.json` states `patiently_for`'s window
+  without its pauses: a refusal that ends within the patience is outlasted, the last attempt is made when the window
+  closes, and nothing waits past it. The rustdoc of both says so, and that a host's own worker supervision is a
+  different policy at another layer.
 
 ### Changed
 

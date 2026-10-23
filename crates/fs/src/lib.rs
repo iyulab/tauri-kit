@@ -385,20 +385,34 @@ pub fn patiently<T>(op: impl FnMut() -> io::Result<T>) -> io::Result<T> {
 /// once.
 ///
 /// `op` must be safe to repeat after a failed attempt — a rename, a create, a delete are.
-pub fn patiently_for<T>(
+///
+/// `patience` is a window, not a number of tries: a refusal that ends within it is outlasted,
+/// because the last attempt is made when the window closes, whatever the pauses before it were. The
+/// pauses are this function's own; `tests/cases/file-retry.json` in this crate states the window's
+/// meaning without them, so another implementation of the same window can run the same table.
+pub fn patiently_for<T>(patience: Duration, op: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    retry(patience, op, is_transient, Instant::now, thread::sleep)
+}
+
+/// [`patiently_for`] with the transient test, the clock and the pause given — the case table runs
+/// it on a clock of its own.
+fn retry<T>(
     patience: Duration,
     mut op: impl FnMut() -> io::Result<T>,
+    transient: impl Fn(&io::Error) -> bool,
+    now: impl Fn() -> Instant,
+    mut sleep: impl FnMut(Duration),
 ) -> io::Result<T> {
-    let until = Instant::now() + patience;
+    let until = now() + patience;
     let mut pause = Duration::from_millis(10);
     loop {
         match op() {
-            Err(e) if is_transient(&e) => {
-                let left = until.saturating_duration_since(Instant::now());
+            Err(e) if transient(&e) => {
+                let left = until.saturating_duration_since(now());
                 if left.is_zero() {
                     return Err(e);
                 }
-                thread::sleep(pause.min(left));
+                sleep(pause.min(left));
                 pause = (pause * 2).min(Duration::from_millis(100));
             }
             done => return done,
@@ -709,6 +723,62 @@ fn sync_parent(path: &Path) -> io::Result<()> {
 #[cfg(not(unix))]
 fn sync_parent(_path: &Path) -> io::Result<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod cases {
+    //! The case table in `tests/cases/file-retry.json`.
+    use super::retry;
+    use std::cell::Cell;
+    use std::io;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn the_file_retry_table() {
+        let table: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/cases/file-retry.json")).unwrap();
+        let cases = table["cases"].as_array().unwrap();
+        assert!(!cases.is_empty());
+        for case in cases {
+            let name = case["name"].as_str().unwrap();
+            let refused = Duration::from_millis(case["refused_ms"].as_u64().unwrap());
+            let lasting = case["refusal"].as_str().unwrap() == "transient";
+            let patience = Duration::from_millis(case["patience_ms"].as_u64().unwrap());
+            let start = Instant::now();
+            let clock = Cell::new(start);
+            let attempts = Cell::new(0u64);
+            let result = retry(
+                patience,
+                || {
+                    attempts.set(attempts.get() + 1);
+                    if clock.get() - start < refused {
+                        Err(io::Error::new(
+                            if lasting {
+                                io::ErrorKind::ResourceBusy
+                            } else {
+                                io::ErrorKind::PermissionDenied
+                            },
+                            "refused",
+                        ))
+                    } else {
+                        Ok(())
+                    }
+                },
+                |e| e.kind() == io::ErrorKind::ResourceBusy,
+                || clock.get(),
+                |pause| clock.set(clock.get() + pause),
+            );
+            let got = if result.is_ok() { "ok" } else { "error" };
+            assert_eq!(got, case["expect"].as_str().unwrap(), "{name}");
+            if let Some(expected) = case["attempts"].as_u64() {
+                assert_eq!(attempts.get(), expected, "{name}: attempts");
+            }
+            assert!(
+                clock.get() - start <= patience,
+                "{name}: waited past the window"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

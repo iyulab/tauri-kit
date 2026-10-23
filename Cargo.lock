@@ -1528,6 +1528,7 @@ version = "0.28.0"
 dependencies = [
  "dunce",
  "libc",
+ "serde_json",
  "tempfile",
  "windows-sys 0.61.2",
 ]
