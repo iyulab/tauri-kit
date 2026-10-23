@@ -7,6 +7,20 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- `tauri-kit-update`: `verify::developer_id(path, &DeveloperId)` (feature `developer-id`) — the macOS counterpart of
+  `verify::authenticode`. A downloaded bundle passes when it is validly signed (every architecture, nested code, strict)
+  with a Developer ID Application certificate of one of the named Apple team IDs, and notarized — the stapled ticket
+  is read, so a stapled release passes with no network. A refusal says who signed (`Refused::OtherDeveloper` with the
+  identifier and team) or carries the Security framework's status (`Refused::Untrusted`). Elsewhere it refuses every
+  bundle with `Refused::Unsupported`. No new dependency: the Security framework is called directly.
+
+### Changed
+
+- `tauri-kit-update`: the `verify` module is built with either `authenticode` or `developer-id`; `Refused` has a new
+  variant (`OtherDeveloper`), and `Refused::Unsupported` no longer names Windows in its message.
+
 ## [0.28.0] - 2026-10-23
 
 ### Added

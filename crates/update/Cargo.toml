@@ -28,6 +28,9 @@ windows-sys = { version = "0.61", optional = true, features = [
 # `verify::authenticode`: check a downloaded installer's Authenticode signature against the expected
 # signer (subject, issuer, thumbprint). Windows; elsewhere it refuses every file.
 authenticode = ["dep:windows-sys"]
+# `verify::developer_id`: check a downloaded macOS bundle's code signature — a notarized Developer ID
+# signature of the expected team. macOS (the Security framework); elsewhere it refuses every bundle.
+developer-id = []
 # `github::Ureq`: the requests `github::Releases` makes, over ureq with the OS's TLS (SChannel on
 # Windows, Security.framework on macOS; OpenSSL elsewhere) and the PC's proxy settings. Without it,
 # `github::Releases` works over the app's own HTTP client (`github::Fetch`).

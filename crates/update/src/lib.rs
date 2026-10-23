@@ -40,8 +40,10 @@
 //! the app's HTTP client or, with the `github` feature, `ureq`.
 //!
 //! A source that downloads an installer itself checks who signed it before handing it on:
-//! [`verify::authenticode`] (feature `authenticode`) compares the signer with an [`verify::Expect`] —
-//! subject, issuer, thumbprint — rather than the display name alone.
+//! [`verify::authenticode`] (feature `authenticode`, Windows) compares the signer with an
+//! [`verify::Expect`] — subject, issuer, thumbprint — rather than the display name alone, and
+//! [`verify::developer_id`] (feature `developer-id`, macOS) requires a notarized Developer ID signature
+//! of the publisher's team.
 //!
 //! On Windows the installer also has to wait for the closing app and its helpers to let go of their
 //! files. The crate's `nsis/wait-for-exit.nsh` is an installer hook that does — see that file.
@@ -92,7 +94,7 @@
 //! [`Source::forget`] too.
 
 pub mod github;
-#[cfg(feature = "authenticode")]
+#[cfg(any(feature = "authenticode", feature = "developer-id"))]
 pub mod verify;
 
 use std::path::PathBuf;
