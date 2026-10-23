@@ -57,6 +57,11 @@
 //!   web view's own menu (WebView2's `ContextMenuRequested`, a macOS web view's `willOpenMenu:withEvent:`) instead of a page
 //!   replacing it and losing copy, paste and the platform's other entries, and hands the app the selected text.
 //!
+//! An eighth is for apps that start through a launcher or run from where an updater put them:
+//!
+//! - **Pin the app, not the process.** [`taskbar::set_taskbar_identity`] gives the window its AppUserModelID and the command a
+//!   taskbar pin of it starts, so a pin starts the app as its shortcuts do instead of the versioned file that drew the window.
+//!
 //! On macOS and Linux the system web view is part of the operating system: [`runtime`] answers
 //! [`Runtime::System`] and there is no profile to clear.
 
@@ -64,6 +69,7 @@ pub mod caption;
 pub mod context_menu;
 pub mod drop;
 pub mod lock;
+pub mod taskbar;
 
 #[cfg(windows)]
 pub use lock::lock_navigation;

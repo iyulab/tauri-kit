@@ -9,6 +9,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ### Added
 
+- `tauri-kit-webview`: `taskbar::set_taskbar_identity(window, &TaskbarIdentity)` (Windows) — gives a window its
+  AppUserModelID and, with `Relaunch`, the command, display name and icon a taskbar pin of it starts
+  (`System.AppUserModel.ID`, `RelaunchCommand`, `RelaunchDisplayNameResource`, `RelaunchIconResource` on the window's
+  property store). Without a relaunch command Windows pins the process that drew the window — for an app that runs from
+  a versioned folder an updater replaces, or that starts through a launcher of its own, the pin then starts the wrong
+  file. An empty ID, a relaunch without a command or display name, and a handle that is not a window are refused with
+  `InvalidInput`. Elsewhere it does nothing.
 - `tauri-kit-update`: `verify::developer_id(path, &DeveloperId)` (feature `developer-id`) — the macOS counterpart of
   `verify::authenticode`. A downloaded bundle passes when it is validly signed (every architecture, nested code, strict)
   with a Developer ID Application certificate of one of the named Apple team IDs, and notarized — the stapled ticket
