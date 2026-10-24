@@ -173,6 +173,8 @@ pub enum PdfError {
     NotReady,
     /// The web view finished without writing the file.
     NotWritten,
+    /// The web view let go of the work before it finished — the window closed while it printed.
+    Abandoned,
     /// The web view refused or failed a call: a runtime too old for printing to PDF, a window
     /// already closed, a path it cannot write.
     WebView(String),
@@ -188,6 +190,9 @@ impl fmt::Display for PdfError {
             }
             PdfError::NotReady => f.write_str("the page was not ready within the ready timeout"),
             PdfError::NotWritten => f.write_str("the web view did not write the PDF"),
+            PdfError::Abandoned => {
+                f.write_str("the web view stopped before the PDF was written (window closed)")
+            }
             PdfError::WebView(message) => write!(f, "the web view failed: {message}"),
         }
     }
@@ -242,6 +247,38 @@ fn evaluate_params(script: &str) -> String {
     json
 }
 
+/// The outcome callback, called at most once — and, if the web view lets go of every step still
+/// holding it without reporting (the window closed mid-print releases its pending handlers
+/// uncalled), called with [`PdfError::Abandoned`] when the last holder goes.
+#[cfg(any(windows, test))]
+struct Done(std::cell::RefCell<Option<OnDone>>);
+
+#[cfg(any(windows, test))]
+type OnDone = Box<dyn FnOnce(Result<(), PdfError>)>;
+
+#[cfg(any(windows, test))]
+impl Done {
+    fn new(on_done: impl FnOnce(Result<(), PdfError>) + 'static) -> Self {
+        Done(std::cell::RefCell::new(Some(Box::new(on_done))))
+    }
+
+    fn finish(&self, outcome: Result<(), PdfError>) {
+        let on_done = self.0.borrow_mut().take();
+        if let Some(on_done) = on_done {
+            on_done(outcome);
+        }
+    }
+}
+
+#[cfg(any(windows, test))]
+impl Drop for Done {
+    fn drop(&mut self) {
+        if let Some(on_done) = self.0.get_mut().take() {
+            on_done(Err(PdfError::Abandoned));
+        }
+    }
+}
+
 /// Whether a `Runtime.evaluate` answer says the page is ready.
 #[cfg(any(windows, test))]
 fn says_ready(answer: &str) -> bool {
@@ -255,7 +292,9 @@ fn says_ready(answer: &str) -> bool {
 /// nothing here waits.
 ///
 /// An error returned here was found before anything started, and `on_done` is not called. Once this
-/// returns `Ok`, `on_done` is called exactly once.
+/// returns `Ok`, `on_done` is called exactly once — with [`PdfError::Abandoned`] if the window closes
+/// before the web view reports. The ready timeout is counted by the page: a page whose script never
+/// yields holds the work until the window closes.
 #[cfg(windows)]
 pub fn print_to_pdf(
     controller: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller,
@@ -264,7 +303,7 @@ pub fn print_to_pdf(
     out: &std::path::Path,
     on_done: impl FnOnce(Result<(), PdfError>) + 'static,
 ) -> Result<(), PdfError> {
-    use std::cell::{Cell, RefCell};
+    use std::cell::Cell;
     use std::rc::Rc;
     use webview2_com::Microsoft::Web::WebView2::Win32::{
         ICoreWebView2, ICoreWebView2Environment6, ICoreWebView2PrintSettings, ICoreWebView2_2,
@@ -321,14 +360,9 @@ pub fn print_to_pdf(
         (core, core7, print)
     };
 
-    // `on_done` travels through closures the web view may call more than once; this takes it once.
-    type Done = Rc<RefCell<Option<Box<dyn FnOnce(Result<(), PdfError>)>>>>;
-    let done: Done = Rc::new(RefCell::new(Some(Box::new(on_done))));
-    let finish = |done: &Done, outcome: Result<(), PdfError>| {
-        if let Some(on_done) = done.borrow_mut().take() {
-            on_done(outcome);
-        }
-    };
+    // `on_done` travels through closures the web view may call more than once, or release uncalled.
+    let done = Rc::new(Done::new(on_done));
+    let finish = |done: &Done, outcome: Result<(), PdfError>| done.finish(outcome);
 
     let path = HSTRING::from(out.as_os_str());
     let print = {
@@ -529,6 +563,33 @@ mod tests {
             params,
             "{\"expression\":\"a \\\"b\\\" \\\\ c\\nd\\u0001\",\"awaitPromise\":true,\"returnByValue\":true}"
         );
+    }
+
+    #[test]
+    fn the_outcome_is_reported_once_and_a_dropped_one_says_abandoned() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let record = |seen: &Rc<RefCell<Vec<Result<(), PdfError>>>>| {
+            let seen = seen.clone();
+            move |outcome| seen.borrow_mut().push(outcome)
+        };
+
+        let done = Rc::new(Done::new(record(&seen)));
+        let held = done.clone();
+        done.finish(Ok(()));
+        held.finish(Err(PdfError::NotWritten));
+        drop(done);
+        drop(held);
+        assert_eq!(*seen.borrow(), vec![Ok(())]);
+
+        seen.borrow_mut().clear();
+        let done = Rc::new(Done::new(record(&seen)));
+        let held = done.clone();
+        drop(done);
+        assert!(seen.borrow().is_empty(), "still held by a pending step");
+        drop(held);
+        assert_eq!(*seen.borrow(), vec![Err(PdfError::Abandoned)]);
     }
 
     #[test]
