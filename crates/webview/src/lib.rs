@@ -62,6 +62,12 @@
 //! - **Pin the app, not the process.** [`taskbar::set_taskbar_identity`] gives the window its AppUserModelID and the command a
 //!   taskbar pin of it starts, so a pin starts the app as its shortcuts do instead of the versioned file that drew the window.
 //!
+//! A ninth is for apps that write reports:
+//!
+//! - **Print a page to a PDF file, with no dialog.** [`pdf::print_to_pdf`] prints the window's document, or HTML the app
+//!   hands over, with the page size, orientation, margins and backgrounds the app asks for — after the page has loaded and
+//!   its fonts are in (WebView2).
+//!
 //! On macOS and Linux the system web view is part of the operating system: [`runtime`] answers
 //! [`Runtime::System`] and there is no profile to clear.
 
@@ -69,6 +75,7 @@ pub mod caption;
 pub mod context_menu;
 pub mod drop;
 pub mod lock;
+pub mod pdf;
 pub mod taskbar;
 
 #[cfg(windows)]

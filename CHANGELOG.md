@@ -9,6 +9,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ### Added
 
+- `tauri-kit-webview`: `pdf::print_to_pdf(controller, source, &PdfSettings, out, on_done)` (Windows) — prints the window's
+  document (`Source::Current`), or HTML the app hands over (`Source::Html`, put in with `NavigateToString`: a data URL
+  ends the document at its first `#`), to a PDF file with no dialog, through WebView2's `PrintToPdf`. It waits for the
+  page itself to be ready — loaded, fonts in — by asking the page (DevTools `Runtime.evaluate` with `awaitPromise`), up
+  to `PdfSettings::ready_timeout`, so an app picks no settle delay; a document put in as a string is not seen by a
+  framework's page-load event. Called on the web view's thread, it starts the work and returns; `on_done` gets the
+  outcome once. `PdfSettings` (paper in inches held upright, `Orientation`, `Margins`, backgrounds; `a4()` · `letter()`)
+  is checked first — margins that meet, a non-positive paper, a zero timeout are refused, as is HTML past WebView2's
+  2 MB. The window stays the app's: a hidden printing window has to be made with the app's own browser arguments.
+  `examples/print_to_pdf.rs` prints a three-page report through a hidden window.
 - `tauri-kit-webview`: `taskbar::set_taskbar_identity(window, &TaskbarIdentity)` (Windows) — gives a window its
   AppUserModelID and, with `Relaunch`, the command, display name and icon a taskbar pin of it starts
   (`System.AppUserModel.ID`, `RelaunchCommand`, `RelaunchDisplayNameResource`, `RelaunchIconResource` on the window's
