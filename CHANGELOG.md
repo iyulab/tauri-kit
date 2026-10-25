@@ -7,6 +7,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-10-26
+
 ### Added
 
 - `tauri-kit-webview`: `pdf::print_to_pdf(controller, source, &PdfSettings, out, on_done)` (Windows) — prints the window's
@@ -934,6 +936,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - `tauri-kit-sidecar`: bundled helper processes without a console window, stopped together with
   everything they start, with readiness waits that notice a crash.
 
+[0.29.0]: https://github.com/iyulab/tauri-kit/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/iyulab/tauri-kit/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/iyulab/tauri-kit/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/iyulab/tauri-kit/compare/v0.25.0...v0.26.0
