@@ -105,3 +105,23 @@ jobs:
       - name: Test
         working-directory: dotnet
         run: dotnet test --solution TauriKit.Sidecar.slnx
+
+  # The credential store is the one .NET piece that talks to the operating system it runs on (the Credential Manager,
+  # the keychain), and the job above runs on Linux, where those tests skip.
+  dotnet-credentials:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: dotnet/global.json
+
+      - name: Test
+        working-directory: dotnet
+        run: dotnet test --project tests/TauriKit.Credentials.Tests
