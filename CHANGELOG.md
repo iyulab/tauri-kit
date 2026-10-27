@@ -7,6 +7,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-10-27
+
 ### Added
 
 - `TauriKit.Credentials` (.NET): macOS. `Credentials` keeps its secrets in the login keychain there — a generic
@@ -953,6 +955,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - `tauri-kit-sidecar`: bundled helper processes without a console window, stopped together with
   everything they start, with readiness waits that notice a crash.
 
+[0.30.0]: https://github.com/iyulab/tauri-kit/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/iyulab/tauri-kit/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/iyulab/tauri-kit/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/iyulab/tauri-kit/compare/v0.26.0...v0.27.0
