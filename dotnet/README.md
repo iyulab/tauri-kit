@@ -153,7 +153,9 @@ crate, for Windows and macOS: the same entries, and the same separation of build
 
 On macOS the keychain answers the program that made an item without asking, and asks the person before any other
 program reads it — unless both are signed as the same developer. An app that signs every build with its Developer ID keeps reading its own entries across updates; an
-ad-hoc signed development build is a new identity with every build, so keep its secrets in memory instead.
+ad-hoc signed development build is a new identity with every build, and a request that meets the question
+waits on it — keep such a build's secrets in memory instead. `CodeSignature.TeamIdentifier` tells which it is: the
+Apple team that signed the running program, `null` when it is unsigned or signed ad hoc.
 
 ```csharp
 var credentials = new Credentials("com.example.app", BuildKinds.Of(typeof(Program).Assembly));

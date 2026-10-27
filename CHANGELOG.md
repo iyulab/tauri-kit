@@ -18,6 +18,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   `TargetName(account)` is the Credential Manager name on Windows and the keychain account on macOS. The keychain asks
   the person before a program reads an item that a differently signed program made, so sharing without a question
   needs both programs signed as the same developer; see the package README.
+- `TauriKit.Credentials` (.NET): `CodeSignature.TeamIdentifier` / `TeamIdentifierOf(path)` (macOS) — the Apple team that
+  signed the running program, or a program or bundle at a path; `null` when it is unsigned or signed ad hoc. A build signed
+  ad hoc is a new identity every time it is built, and a keychain request that meets the question about an item an
+  earlier build made waits on it, so an app that keeps secrets in `Credentials` can keep them in memory while the
+  team is `null`. A program started as `dotnet app.dll` reports the `dotnet` host's signature.
 
 ## [0.29.0] - 2026-10-26
 

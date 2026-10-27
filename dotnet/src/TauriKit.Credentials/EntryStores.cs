@@ -323,7 +323,7 @@ internal static unsafe partial class Mac
         throw new IOException($"The keychain could not {what} the entry: {meaning} (OSStatus {status}).");
     }
 
-    private const uint Utf8 = 0x08000100;
+    public const uint Utf8 = 0x08000100;
 
     [LibraryImport(SecurityLib)]
     public static partial int SecItemCopyMatching(nint query, out nint result);
