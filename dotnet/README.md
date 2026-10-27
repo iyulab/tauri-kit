@@ -1,7 +1,7 @@
 # tauri-kit for .NET
 
 The .NET halves of tauri-kit, released under the same version as the crates: the loopback backend
-(below), the Windows credential store ([`TauriKit.Credentials`](#tauritkitcredentials)) and declared
+(below), the credential store for Windows and macOS ([`TauriKit.Credentials`](#tauritkitcredentials)) and declared
 diagnostics events and error reports ([`TauriKit.Diagnostics`](#tauritkitdiagnostics)).
 
 ## TauriKit.Sidecar.Loopback
@@ -143,10 +143,17 @@ reach it over `HttpClient` at `app.Urls`.
 ## TauriKit.Credentials
 
 The .NET twin of the [`tauri-kit-credentials`](https://github.com/iyulab/tauri-kit/tree/main/crates/credentials)
-crate, for Windows: the same Credential Manager entries — a generic credential named
-`<account>.<service>`, its user name the account, the secret as UTF-16 — and the same separation of
-builds (`<service>.test`, `<service>.dev`, `<service>`). A Rust shell and its .NET backend built the same
-way read and write one secret.
+crate, for Windows and macOS: the same entries, and the same separation of builds (`<service>.test`,
+`<service>.dev`, `<service>`). A Rust shell and its .NET backend built the same way read and write one secret.
+
+| Platform | Store | Entry |
+|---|---|---|
+| Windows | Credential Manager | a generic credential named `<account>.<service>`, its user name the account, the secret as UTF-16 (long secrets in parts) |
+| macOS | login keychain | a generic password with service `<service>` and account `<account>`, the secret as UTF-8 (one item, never in parts) |
+
+On macOS the keychain answers the program that made an item without asking, and asks the person before any other
+program reads it — unless both are signed as the same developer. An app that signs every build with its Developer ID keeps reading its own entries across updates; an
+ad-hoc signed development build is a new identity with every build, so keep its secrets in memory instead.
 
 ```csharp
 var credentials = new Credentials("com.example.app", BuildKinds.Of(typeof(Program).Assembly));
@@ -156,7 +163,7 @@ credentials.Delete("api-key");            // not there is not an error
 ```
 
 `BuildKinds.Of` reads whether the app's assembly was compiled without optimization (a Debug build →
-`Dev`); a test run passes `BuildKind.Test` itself. macOS and Linux stores are not covered on the .NET side.
+`Dev`); a test run passes `BuildKind.Test` itself. Linux is not covered on the .NET side.
 
 ## TauriKit.Diagnostics
 

@@ -7,9 +7,11 @@ namespace TauriKit.Credentials.Tests;
 public sealed class CredentialsTests
 {
     [Fact]
+    [SupportedOSPlatform("windows")]
+    [SupportedOSPlatform("macos")]
     public void Each_kind_of_build_gets_its_own_service_name()
     {
-        if (!OperatingSystem.IsWindows()) { Assert.Skip("Credential Manager is Windows only"); return; }
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsMacOS()) { Assert.Skip("Credentials need the Credential Manager or the keychain"); return; }
         Assert.Equal("com.example.app", new Credentials("com.example.app", BuildKind.Release).Service);
         Assert.Equal("com.example.app.dev", new Credentials("com.example.app", BuildKind.Dev).Service);
         Assert.Equal("com.example.app.test", new Credentials("com.example.app", BuildKind.Test).Service);

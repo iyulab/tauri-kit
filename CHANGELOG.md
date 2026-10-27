@@ -7,6 +7,18 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- `TauriKit.Credentials` (.NET): macOS. `Credentials` keeps its secrets in the login keychain there — a generic
+  password with service `<service>` (`.test` / `.dev` for those builds) and account `<account>`, the secret as UTF-8,
+  the items the `tauri-kit-credentials` crate's keychain store reads and writes, so a shell and its .NET backend built the same
+  way share one secret. An item holds the whole secret: nothing is cut into parts (the Windows layout is unchanged).
+  The Security framework is called directly — no new package. `Credentials` is now annotated for Windows and macOS
+  (it was Windows only); on any other platform the constructor throws `PlatformNotSupportedException`.
+  `TargetName(account)` is the Credential Manager name on Windows and the keychain account on macOS. The keychain asks
+  the person before a program reads an item that a differently signed program made, so sharing without a question
+  needs both programs signed as the same developer; see the package README.
+
 ## [0.29.0] - 2026-10-26
 
 ### Added

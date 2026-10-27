@@ -38,17 +38,25 @@ public static class BuildKinds
 }
 
 /// <summary>
-/// Secrets an app keeps under one service name, one per account, in the Windows Credential Manager — the same entries
-/// the tauri-kit-credentials crate reads and writes: a generic credential named <c>&lt;account&gt;.&lt;service&gt;</c>
-/// (the service with <c>.test</c> or <c>.dev</c> for those builds), its user name the account, the secret as UTF-16.
-/// A Rust shell and its .NET backend built the same way therefore share each secret.
+/// Secrets an app keeps under one service name, one per account, in the platform's own store — the same entries the
+/// tauri-kit-credentials crate reads and writes, so a Rust shell and its .NET backend built the same way share each secret.
+/// <list type="bullet">
+/// <item><description><b>Windows</b>: the Credential Manager — a generic credential named
+/// <c>&lt;account&gt;.&lt;service&gt;</c> (the service with <c>.test</c> or <c>.dev</c> for those builds), its user name
+/// the account, the secret as UTF-16.</description></item>
+/// <item><description><b>macOS</b>: the login keychain — a generic password with service attribute
+/// <c>&lt;service&gt;</c> (with the same suffixes) and account attribute <c>&lt;account&gt;</c>, the secret as UTF-8.
+/// The keychain asks the person before a program reads an item that another, differently signed program made, so the
+/// shell and the backend share a secret without a question only when both are signed as the same developer.</description></item>
+/// </list>
 /// </summary>
 /// <remarks>
-/// One entry holds at most 2,560 bytes — 1,280 UTF-16 units — which a signed-in session easily passes. A longer secret
-/// is kept in parts, in the crate's layout: the entry for <c>&lt;account&gt;</c> holds
+/// On Windows one entry holds at most 2,560 bytes — 1,280 UTF-16 units — which a signed-in session easily passes. A
+/// longer secret is kept in parts, in the crate's layout: the entry for <c>&lt;account&gt;</c> holds
 /// <c>"\0tauri-kit-credentials/parts=&lt;n&gt;\0"</c> and the first part, the entry for <c>&lt;account&gt;/&lt;i&gt;</c>
 /// part <c>i</c>. Reading joins them, and a missing part is an error rather than a cut secret. A secret that fits is one
-/// entry as before. A secret may therefore not begin with <c>'\0'</c>.
+/// entry as before. A secret may therefore not begin with <c>'\0'</c>. A keychain item holds a secret of any length, so
+/// on macOS nothing is cut.
 /// </remarks>
 /// <example>
 /// <code>
@@ -59,23 +67,24 @@ public static class BuildKinds
 /// </code>
 /// </example>
 [SupportedOSPlatform("windows")]
+[SupportedOSPlatform("macos")]
 public sealed class Credentials
 {
-    // The Windows limits the crate checks too: a secret of at most 2,560 bytes, names of at most 32,767 characters.
-    private const int MaxSecretBytes = 5 * 512;
-    private const int MaxTargetLength = 32767;
-    private const int MaxUserNameLength = 513;
-
     // Long secrets, as the crate keeps them (its «Long secrets» section).
     private const string PartsMarker = "\0tauri-kit-credentials/parts=";
     private const int MaxParts = 64;
 
-    private readonly int _partUnits = MaxSecretBytes / 2;
+    private readonly IEntryStore _store;
+    private readonly int _partUnits;
 
     /// <summary>Secrets under <paramref name="service"/> (for example the app's identifier), as seen by this kind of build.</summary>
     public Credentials(string service, BuildKind kind)
     {
         ArgumentException.ThrowIfNullOrEmpty(service);
+        _store = OperatingSystem.IsWindows() ? new WindowsStore()
+            : OperatingSystem.IsMacOS() ? new KeychainStore()
+            : throw new PlatformNotSupportedException("Credentials are kept in the Windows Credential Manager or the macOS keychain.");
+        _partUnits = _store.PartUnits;
         Service = kind switch
         {
             BuildKind.Test => service + ".test",
@@ -91,15 +100,11 @@ public sealed class Credentials
     /// <summary>The service name entries are actually stored under.</summary>
     public string Service { get; }
 
-    /// <summary>The Credential Manager name of <paramref name="account"/>'s entry.</summary>
-    public string TargetName(string account)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(account);
-        var target = account + "." + Service;
-        if (target.Length > MaxTargetLength) throw new ArgumentException("The account and service together are longer than the Credential Manager allows.", nameof(account));
-        if (account.Length > MaxUserNameLength) throw new ArgumentException("The account is longer than the Credential Manager allows for a user name.", nameof(account));
-        return target;
-    }
+    /// <summary>
+    /// The name the platform keeps <paramref name="account"/>'s entry under: on Windows the Credential Manager's
+    /// <c>&lt;account&gt;.&lt;service&gt;</c>, on macOS the keychain item's account (its service attribute is <see cref="Service"/>).
+    /// </summary>
+    public string TargetName(string account) => _store.Name(Service, account);
 
     /// <summary>Stores <paramref name="secret"/> for <paramref name="account"/>, replacing any earlier one (and keeping its user name, alias and comment).</summary>
     /// <exception cref="ArgumentException">The secret begins with <c>'\0'</c>, or would take more than 64 entries.</exception>
@@ -188,90 +193,11 @@ public sealed class Credentials
         return parts;
     }
 
-    private unsafe void WriteEntry(string account, string secret)
-    {
-        var target = TargetName(account);
-        var blob = new byte[secret.Length * 2];
-        System.Text.Encoding.Unicode.GetBytes(secret, blob); // UTF-16LE, no terminator — as the crate writes it
-        if (blob.Length > MaxSecretBytes) throw new ArgumentException("The secret is longer than the Credential Manager allows (2,560 bytes as UTF-16).", nameof(secret));
+    private void WriteEntry(string account, string secret) => _store.Write(Service, account, secret);
 
-        var (user, alias, comment) = (account, (string?)null, (string?)null);
-        if (Native.CredRead(target, Native.CredTypeGeneric, 0, out var existing))
-        {
-            try
-            {
-                var old = (Native.Credential*)existing;
-                user = Marshal.PtrToStringUni(old->UserName) ?? account;
-                alias = Marshal.PtrToStringUni(old->TargetAlias);
-                comment = Marshal.PtrToStringUni(old->Comment);
-            }
-            finally
-            {
-                Native.CredFree(existing);
-            }
-        }
+    private string? ReadEntry(string account) => _store.Read(Service, account);
 
-        fixed (char* targetPtr = target)
-        fixed (char* userPtr = user)
-        fixed (char* aliasPtr = alias ?? string.Empty)
-        fixed (char* commentPtr = comment ?? string.Empty)
-        fixed (byte* blobPtr = blob)
-        {
-            var credential = new Native.Credential
-            {
-                Type = Native.CredTypeGeneric,
-                TargetName = (nint)targetPtr,
-                Comment = (nint)commentPtr,
-                CredentialBlobSize = (uint)blob.Length,
-                CredentialBlob = (nint)blobPtr,
-                Persist = Native.CredPersistEnterprise,
-                TargetAlias = (nint)aliasPtr,
-                UserName = (nint)userPtr,
-            };
-            var written = Native.CredWrite(&credential, 0);
-            Array.Clear(blob);
-            if (!written) throw new Win32Exception(Marshal.GetLastPInvokeError());
-        }
-    }
-
-    private unsafe string? ReadEntry(string account)
-    {
-        var target = TargetName(account);
-        if (!Native.CredRead(target, Native.CredTypeGeneric, 0, out var found))
-        {
-            var error = Marshal.GetLastPInvokeError();
-            if (error == Native.ErrorNotFound) return null;
-            throw new Win32Exception(error);
-        }
-
-        try
-        {
-            var credential = (Native.Credential*)found;
-            var size = (int)credential->CredentialBlobSize;
-            if (size % 2 != 0) throw new InvalidDataException("The entry's secret is not UTF-16 text.");
-            var bytes = new ReadOnlySpan<byte>((void*)credential->CredentialBlob, size);
-            try
-            {
-                return new System.Text.UnicodeEncoding(bigEndian: false, byteOrderMark: false, throwOnInvalidBytes: true).GetString(bytes);
-            }
-            catch (System.Text.DecoderFallbackException e)
-            {
-                throw new InvalidDataException("The entry's secret is not UTF-16 text.", e);
-            }
-        }
-        finally
-        {
-            Native.CredFree(found);
-        }
-    }
-
-    private void RemoveEntry(string account)
-    {
-        var target = TargetName(account);
-        if (Native.CredDelete(target, Native.CredTypeGeneric, 0)) return;
-        var error = Marshal.GetLastPInvokeError();
-        if (error != Native.ErrorNotFound) throw new Win32Exception(error);
-    }
+    private void RemoveEntry(string account) => _store.Remove(Service, account);
 }
 
 [SupportedOSPlatform("windows")]
