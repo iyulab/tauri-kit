@@ -7,6 +7,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Changed
+
+- `tauri-kit-webview` `print_to_pdf` example: `--close-early` closes the window right after the print starts and checks the outcome is `PdfError::Abandoned` (run on Windows with WebView2 — `cargo run -p tauri-kit-webview --example print_to_pdf -- --close-early`).
+
 ## [0.30.0] - 2026-10-27
 
 ### Added

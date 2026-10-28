@@ -1,6 +1,9 @@
 //! Prints a small report to a PDF file through a hidden WebView2 window, the way an app prints from
 //! a window it made for printing: `cargo run -p tauri-kit-webview --example print_to_pdf [<out.pdf>]`.
 //! Windows only; it needs the WebView2 runtime and a desktop session.
+//!
+//! With `--close-early` the window is closed right after the print starts, and the run checks that
+//! the outcome is `PdfError::Abandoned`, once: `... --example print_to_pdf -- --close-early`.
 
 #[cfg(windows)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -19,8 +22,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         WS_OVERLAPPEDWINDOW,
     };
 
+    let close_early = std::env::args_os().any(|a| a == "--close-early");
     let out = std::env::args_os()
-        .nth(1)
+        .skip(1)
+        .find(|a| a != "--close-early")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::env::temp_dir().join("print_to_pdf-example.pdf"));
     let _ = std::fs::remove_file(&out);
@@ -103,6 +108,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let _ = tx.send(outcome);
             },
         )?;
+        if close_early {
+            // The window an app closes while its report prints: the web view lets go of the work.
+            controller.Close()?;
+            let outcome = webview2_com::wait_with_pump(rx)?;
+            // The callback is an `FnOnce`: whatever it reports is the one outcome.
+            return match outcome {
+                Err(tauri_kit_webview::pdf::PdfError::Abandoned) => {
+                    println!("closed early: Abandoned, once");
+                    Ok(())
+                }
+                other => Err(format!("closed early: expected Abandoned, got {other:?}").into()),
+            };
+        }
         webview2_com::wait_with_pump(rx)??;
 
         let bytes = std::fs::read(&out)?;
