@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Security
+
+- `Cargo.lock`: `ctutils` 0.4.2 → 0.4.7 (RUSTSEC-2026-0385 — mask generation and `u128` comparisons could branch on secret
+  values before 0.4.4). It is reached only through `digest`, from the `secret-service` credentials path on Linux; applications
+  resolve their own lock file, so this changes the repository's development lock only.
+
 ### Changed
 
 - `tauri-kit-webview` `print_to_pdf` example: `--close-early` closes the window right after the print starts and checks the outcome is `PdfError::Abandoned` (run on Windows with WebView2 — `cargo run -p tauri-kit-webview --example print_to_pdf -- --close-early`).
