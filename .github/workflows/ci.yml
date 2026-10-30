@@ -71,7 +71,7 @@ jobs:
           node-version: 22
 
       - name: Check public text
-        run: npx --yes @iyulab/tauri-kit-dev@0.9.0 public-text --config scripts/public-text.config.js .
+        run: npx --yes @iyulab/tauri-kit-dev@0.12.0 public-text --config scripts/public-text.config.js .
 
   # The crates declare the oldest compiler they build with (`rust-version`). That promise is only
   # true while something builds with exactly that compiler, on every platform the crates target.
