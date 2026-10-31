@@ -7,6 +7,18 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- `tauri-kit-webview` `failure` (Windows): `failure::watch(controller, on_failed)` reports WebView2's `ProcessFailed` as closed values
+  (`Failed { process, cause, exit_code }`; `Process` and `Cause` name every value WebView2 documents, and a number a newer
+  runtime adds arrives as `Unknown`), and `failure::reload(controller)` restarts a page whose render process ended
+  (`Process::page_lost()`). Until now a window whose render process ended stayed on screen blank or frozen and the app was
+  told nothing — the framework on top of the runtime does not pass the event on. What to tell the person, whether to
+  report it and whether to reload stays the app's. macOS and Linux: not supported (the system web view reports a
+  terminated content process through the framework's own navigation delegate).
+  `cargo run -p tauri-kit-webview --example process_failure` ends the page's render processes from outside and checks the report and the
+  reload (Windows with WebView2).
+
 ### Security
 
 - `Cargo.lock`: `ctutils` 0.4.2 → 0.4.7 (RUSTSEC-2026-0385 — mask generation and `u128` comparisons could branch on secret

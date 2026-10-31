@@ -68,12 +68,19 @@
 //!   hands over, with the page size, orientation, margins and backgrounds the app asks for — after the page has loaded and
 //!   its fonts are in (WebView2).
 //!
+//! A tenth is for windows that would otherwise sit blank or frozen when the web view's own processes fail:
+//!
+//! - **Say when a web view process failed.** [`failure::watch`] reports WebView2's `ProcessFailed` as closed values —
+//!   which process, why, the exit code — and [`failure::reload`] restarts a page whose render process ended; what the app
+//!   tells the person, reports or retries stays the app's.
+//!
 //! On macOS and Linux the system web view is part of the operating system: [`runtime`] answers
 //! [`Runtime::System`] and there is no profile to clear.
 
 pub mod caption;
 pub mod context_menu;
 pub mod drop;
+pub mod failure;
 pub mod lock;
 pub mod pdf;
 pub mod taskbar;

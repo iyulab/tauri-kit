@@ -29,3 +29,7 @@ objc2-web-kit = { version = "0.3", default-features = false, features = ["std", 
 
 [dev-dependencies]
 tempfile = "3"
+
+# The process_failure example ends a process from outside.
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
