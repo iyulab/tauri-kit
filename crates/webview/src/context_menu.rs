@@ -347,7 +347,7 @@ mod mac {
         Ok(())
     }
 
-    // TODO(upstream: wry has no context menu hook for its macOS web view — with one, this method is no longer added at run time)
+    // TODO(upstream: tauri-apps/wry#1919 — wry has no context menu hook for its macOS web view; with one, this method is no longer added at run time)
     /// Adds `willOpenMenu:withEvent:` to the web view's class, once. A class that already has its own
     /// (one this crate did not add) is left alone.
     fn hook(class: &AnyClass) -> Result<(), Unsupported> {
