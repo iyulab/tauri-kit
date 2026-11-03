@@ -314,6 +314,34 @@ fn a_crash_before_the_readiness_line_is_reported_at_once() {
 }
 
 #[test]
+fn a_line_printed_just_before_exiting_is_still_the_line() {
+    // Guards the contract: a line printed just before exiting is the line, not an exit. The race behind it
+    // (the exit is seen before the reader thread has forwarded the line) cannot be forced, so run it many times.
+    #[cfg(windows)]
+    let script = "echo ready& exit 0";
+    #[cfg(not(windows))]
+    let script = "echo ready; exit 0";
+    for round in 0..60 {
+        let mut sidecar = Sidecar::spawn(
+            shell(script),
+            Output::Lines {
+                stdout: None,
+                stderr: Sink::Discard,
+            },
+        )
+        .unwrap();
+        let readiness = sidecar
+            .wait_line(Duration::from_secs(30), |l| l == "ready")
+            .unwrap();
+        assert_eq!(
+            readiness,
+            LineReadiness::Line("ready".to_string()),
+            "round {round}: the line was lost to the exit"
+        );
+    }
+}
+
+#[test]
 fn waiting_for_a_line_stops_at_the_deadline() {
     let mut sidecar = Sidecar::spawn(
         long_running(),

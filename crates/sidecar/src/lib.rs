@@ -64,6 +64,9 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+/// How long `wait_line` keeps listening for the last lines of a sidecar that has already exited.
+const EXIT_DRAIN: Duration = Duration::from_secs(1);
+
 /// Keeps a child from getting a console window of its own on Windows. No-op elsewhere.
 ///
 /// [`Sidecar::spawn`] applies this itself; it is public for the other processes an app starts.
@@ -320,11 +323,22 @@ impl Sidecar {
                 }
             }
             if let Some(status) = tree::exit_status(&mut self.child)? {
-                // Lines printed just before exiting may still be queued.
-                while let Ok(line) = lines.receiver.try_recv() {
-                    if accept(&line) {
-                        lines.listening.store(false, Ordering::Relaxed);
-                        return Ok(LineReadiness::Line(line));
+                // A line printed just before exiting may not have reached the queue yet: the reader
+                // thread forwards it on its own schedule, and the exit can be seen first (readily so
+                // on a loaded machine). Wait for stdout to close — the reader ends at end of file —
+                // before reporting the exit. Bounded: a descendant that outlives the sidecar can
+                // keep the pipe open.
+                let drained_by = Instant::now()
+                    + EXIT_DRAIN.min(until.saturating_duration_since(Instant::now()));
+                loop {
+                    let left = drained_by.saturating_duration_since(Instant::now());
+                    match lines.receiver.recv_timeout(left) {
+                        Ok(line) if accept(&line) => {
+                            lines.listening.store(false, Ordering::Relaxed);
+                            return Ok(LineReadiness::Line(line));
+                        }
+                        Ok(_) => {}
+                        Err(_) => break,
                     }
                 }
                 return Ok(LineReadiness::Exited(status));

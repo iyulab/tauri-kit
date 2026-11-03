@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Fixed
+
+- `tauri-kit-sidecar`: `Sidecar::wait_line` (and `Loopback::start`, which waits through it) reported `Exited` for a sidecar that
+  printed its readiness line and then ended right away, when the exit was seen before the stdout reader thread had forwarded
+  the line — readily so on a loaded machine. It now waits (at most one second, and never past the caller's deadline) for stdout
+  to close before reporting the exit, so a line printed just before exiting is returned as the line.
+
 ## [0.31.0] - 2026-10-31
 
 ### Added
