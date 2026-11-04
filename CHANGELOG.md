@@ -11,7 +11,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 - `tauri-kit-notification` (new crate, macOS): the operating system's notification permission as a value
   (`permission()` → `Granted` / `Denied` / `NotDetermined` / `Unavailable`), `request_permission()` that asks a person who has
-  not been asked, and `show(&Notice { title, body, activation_id })` through the user-notification centre. The page's own
+  not been asked, and `show(&Notice { title, body, activation_id })` through the user-notification centre, shown even while the app's window is
+  in front, and `on_activation(handler)` which receives the activation id when the person clicks the notice. The page's own
   `Notification` API is no route for an installed app on macOS — the system web view answers `denied` without asking — and the
   framework on top of the web view does not report the permission either. Run outside an app bundle (a development build started
   from a terminal) every entry answers `Unavailable` instead of reaching the framework, which would raise an exception there.

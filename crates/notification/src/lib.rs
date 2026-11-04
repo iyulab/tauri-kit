@@ -37,8 +37,7 @@ pub struct Notice {
     pub title: String,
     /// The text under it; may be empty.
     pub body: String,
-    /// Travels with the notice so a click can name it; `None` names nothing. (The click report itself is
-    /// not available yet.)
+    /// Handed to [`on_activation`] when the person clicks the notice; `None` reports nothing.
     pub activation_id: Option<String>,
 }
 
@@ -74,7 +73,9 @@ pub fn permission() -> Permission {
 
 /// Asks the person once if they have not been asked ([`Permission::NotDetermined`]); returns the answer.
 /// Otherwise returns the current permission without showing anything. Blocks until the person answers, so
-/// call it from a worker, not from the thread that runs the window.
+/// call it from a worker, not from the thread that runs the window. If the answer is still
+/// [`Permission::NotDetermined`] the system could not show the question — observed for a bundle run from a
+/// temporary folder; an installed app in an application folder is asked.
 pub fn request_permission() -> Permission {
     platform::request_permission()
 }
@@ -83,4 +84,14 @@ pub fn request_permission() -> Permission {
 /// it never asks by itself.
 pub fn show(notice: &Notice) -> Result<(), Error> {
     platform::show(notice)
+}
+
+/// Calls `handler` with the notice's activation id when the person clicks a notice this app showed.
+///
+/// Call it once, at startup, before the app's window opens: a click that launches a closed app is delivered
+/// to the handler set by then. A later call replaces the handler. The handler runs on a thread of the
+/// system's choosing, not the one that runs the window. A notice without an activation id reports nothing.
+/// Does nothing where [`permission`] is [`Permission::Unavailable`].
+pub fn on_activation(handler: impl Fn(&str) + Send + Sync + 'static) {
+    platform::on_activation(Box::new(handler))
 }

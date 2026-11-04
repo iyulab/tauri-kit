@@ -4,16 +4,19 @@
 
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc;
+use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::Duration;
 
 use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, Bool};
-use objc2_foundation::{NSBundle, NSDictionary, NSError, NSString};
+use objc2::runtime::{AnyObject, Bool, ProtocolObject};
+use objc2::{define_class, msg_send, AllocAnyThread};
+use objc2_foundation::{NSBundle, NSDictionary, NSError, NSObject, NSObjectProtocol, NSString};
 use objc2_user_notifications::{
-    UNAuthorizationOptions, UNAuthorizationStatus, UNMutableNotificationContent,
-    UNNotificationRequest, UNNotificationSettings, UNUserNotificationCenter,
+    UNAuthorizationOptions, UNAuthorizationStatus, UNMutableNotificationContent, UNNotification,
+    UNNotificationDefaultActionIdentifier, UNNotificationPresentationOptions,
+    UNNotificationRequest, UNNotificationResponse, UNNotificationSettings,
+    UNUserNotificationCenter, UNUserNotificationCenterDelegate,
 };
 
 use crate::{Error, Notice, Permission};
@@ -123,4 +126,84 @@ pub(crate) fn show(notice: &Notice) -> Result<(), Error> {
             "the notification centre did not answer".into(),
         )),
     }
+}
+
+type Handler = Box<dyn Fn(&str) + Send + Sync>;
+
+static HANDLER: Mutex<Option<Handler>> = Mutex::new(None);
+
+define_class!(
+    // SAFETY: NSObject has no subclassing requirements; the class holds no state of its own.
+    #[unsafe(super(NSObject))]
+    #[name = "TauriKitNotificationDelegate"]
+    struct Delegate;
+
+    unsafe impl NSObjectProtocol for Delegate {}
+
+    unsafe impl UNUserNotificationCenterDelegate for Delegate {
+        // A notice the app asked to show is shown even while its window is in front: the app decides when
+        // to call `show`, the system's default would swallow it.
+        #[unsafe(method(userNotificationCenter:willPresentNotification:withCompletionHandler:))]
+        fn will_present(
+            &self,
+            _center: &UNUserNotificationCenter,
+            _notification: &UNNotification,
+            completion: &block2::DynBlock<dyn Fn(UNNotificationPresentationOptions)>,
+        ) {
+            completion.call((UNNotificationPresentationOptions::Banner
+                | UNNotificationPresentationOptions::Sound,));
+        }
+
+        #[unsafe(method(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:))]
+        fn did_receive(
+            &self,
+            _center: &UNUserNotificationCenter,
+            response: &UNNotificationResponse,
+            completion: &block2::DynBlock<dyn Fn()>,
+        ) {
+            // SAFETY: a constant string the framework defines.
+            let default_action = unsafe { UNNotificationDefaultActionIdentifier };
+            if response.actionIdentifier().isEqualToString(default_action) {
+                let info = response.notification().request().content().userInfo();
+                let key = NSString::from_str(ACTIVATION_KEY);
+                // The user info is the property list `show` put there.
+                let id = info
+                    .objectForKey(&key)
+                    .and_then(|v| v.downcast::<NSString>().ok())
+                    .map(|v| v.to_string());
+                if let (Some(id), Ok(handler)) = (id, HANDLER.lock()) {
+                    if let Some(handler) = handler.as_ref() {
+                        handler(&id);
+                    }
+                }
+            }
+            completion.call(());
+        }
+    }
+);
+
+/// The one delegate object; the notification centre holds its delegate weakly, so it is kept here.
+#[allow(dead_code)] // held only to keep the delegate alive
+struct Kept(Retained<Delegate>);
+// SAFETY: the delegate keeps no state and its methods only read the notice they are given and the
+// handler behind its mutex.
+unsafe impl Send for Kept {}
+unsafe impl Sync for Kept {}
+
+static DELEGATE: OnceLock<Kept> = OnceLock::new();
+
+pub(crate) fn on_activation(handler: Handler) {
+    if !is_bundled() {
+        return;
+    }
+    if let Ok(mut slot) = HANDLER.lock() {
+        *slot = Some(handler);
+    }
+    let kept = DELEGATE.get_or_init(|| {
+        let delegate: Retained<Delegate> = unsafe { msg_send![Delegate::alloc(), init] };
+        let center = UNUserNotificationCenter::currentNotificationCenter();
+        center.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+        Kept(delegate)
+    });
+    let _ = kept;
 }
