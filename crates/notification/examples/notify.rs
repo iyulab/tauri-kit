@@ -25,11 +25,14 @@
 //! Started from a terminal instead it prints `Unavailable` and ends.
 
 use std::time::Duration;
-use tauri_kit_notification::{on_activation, permission, request_permission, show, Notice};
+use tauri_kit_notification::{
+    on_activation, permission, request_permission, set_app_user_model_id, show, Notice,
+};
 
 /// The notices work through a running application, so on macOS the main thread runs one (an installed
 /// Tauri app already does) and the calls are made from a worker.
 fn work() {
+    set_app_user_model_id("example.notify"); // Windows only; ignored elsewhere
     on_activation(|id| println!("activated: {id}"));
     println!("permission: {:?}", permission());
     println!("after asking: {:?}", request_permission());

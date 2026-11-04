@@ -9,8 +9,9 @@
 //! What it does not do: it supplies no words (a [`Notice`]'s title, body and activation id are the app's) and
 //! holds no constant of any app (the bundle identifier is read from the running bundle).
 //!
-//! macOS: through the user-notification centre. Other systems: not supported yet — [`permission`] answers
-//! [`Permission::Unavailable`] and [`show`] fails with [`Error::Unavailable`].
+//! macOS: through the user-notification centre. Windows: through the shell's toasts, under the app's
+//! application user model id ([`set_app_user_model_id`]). Other systems: not supported yet — [`permission`]
+//! answers [`Permission::Unavailable`] and [`show`] fails with [`Error::Unavailable`].
 
 mod platform;
 
@@ -94,4 +95,11 @@ pub fn show(notice: &Notice) -> Result<(), Error> {
 /// Does nothing where [`permission`] is [`Permission::Unavailable`].
 pub fn on_activation(handler: impl Fn(&str) + Send + Sync + 'static) {
     platform::on_activation(Box::new(handler))
+}
+
+/// Windows only: the application user model id the toasts are shown under, for an app that did not set one
+/// for its process. Without an id every entry reports [`Permission::Unavailable`]. Other systems ignore it.
+/// Registering the id's display name and icon is the installer's job; the id itself is the app's.
+pub fn set_app_user_model_id(id: impl Into<String>) {
+    platform::set_app_user_model_id(id.into())
 }
