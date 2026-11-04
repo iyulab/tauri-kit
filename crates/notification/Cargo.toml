@@ -1,0 +1,16 @@
+[package]
+name = "tauri-kit-notification"
+version.workspace = true
+description = "A native desktop notification for an installed app: the operating system's notification permission as a value the app can read and ask for, a notice with an activation id, and the click reported back."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+keywords = ["tauri", "notification", "desktop", "macos", "permission"]
+categories = ["os"]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSBundle", "NSString", "NSError", "NSDictionary", "NSObject", "NSArray", "NSValue"] }
+objc2-user-notifications = "0.3"

@@ -32,6 +32,8 @@ the failures are quiet, platform-specific, and found late:
 - **The web view under the window** — saying so when the runtime is missing, keeping form entries out
   of its profile, keeping a window that shows untrusted content on its own origins, keeping the system's
   window-snapping flyout on a maximize button the page draws
+- **Notifications** — the system's permission to show one, as a value the app can read, ask for and explain,
+  and a notice shown through the system's own route (the words and the choice to notify stay the app's)
 - **The person's languages** — which UI languages they prefer, in their order, before any window
   exists (the words themselves stay the app's)
 
