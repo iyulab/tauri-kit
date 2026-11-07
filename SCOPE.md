@@ -36,6 +36,9 @@ the failures are quiet, platform-specific, and found late:
   and a notice shown through the system's own route (the words and the choice to notify stay the app's)
 - **The person's languages** — which UI languages they prefer, in their order, before any window
   exists (the words themselves stay the app's)
+- **Dialogs a test can answer** — one route for the app's open and save dialogs, so a build made for tests
+  takes its answers from a file instead of a window nobody sees (the dialog itself and its words stay the
+  app's; driving the test that writes the answers is tauri-kit-dev's)
 
 One capability per crate, so an app takes only what it needs. All crates share one version.
 

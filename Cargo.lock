@@ -1546,6 +1546,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-kit-dialog"
+version = "0.31.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri-kit-fs",
+ "tempfile",
+]
+
+[[package]]
 name = "tauri-kit-fs"
 version = "0.31.0"
 dependencies = [

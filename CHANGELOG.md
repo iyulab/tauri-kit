@@ -9,6 +9,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ### Added
 
+- `tauri-kit-dialog` (new crate): one route for an app's open and save dialogs, `answer_or(&Ask { kind, title, default_path, filters },
+  show)`, where `show` is the app's own dialog. Built with the `test-answers` feature — only for builds made for tests — a run
+  started with `TAURI_KIT_DIALOG_ANSWERS` naming a JSON Lines file takes each answer from it in turn (`save` · `open` ·
+  `folder` · `cancel`) and appends what was asked to the same path with `.asked`; a dialog with no answer left, or an answer
+  of another kind, is an `Error` rather than a window shown. Neither file is rewritten, so a test may append answers while the
+  app runs. Without the feature the crate holds no such code and no dependencies.
 - `tauri-kit-webview` `drop::drag_pasteboard_paths(names)` (macOS): where the files a page received in its `drop` are, read
   from the system's drag pasteboard and returned in the page's order. A page that keeps HTML5 drag and drop has no other way
   to learn them there — the framework's drop handler, which reports paths, takes every drag the web view would see. The page
