@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write # nuget.org trusted publishing: the OIDC token is exchanged for a one-hour key
 
 concurrency:
   group: publish-nuget
@@ -18,12 +19,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Check the API key is available
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        run: |
-          if [ -z "$NUGET_API_KEY" ]; then echo "NUGET_API_KEY is not available to this repository"; exit 1; fi
-
       - name: Refuse anything but a version tag
         run: |
           case "$GITHUB_REF" in refs/tags/v*) ;; *) echo "run this on a version tag, not $GITHUB_REF"; exit 1;; esac
@@ -47,8 +42,15 @@ jobs:
         working-directory: dotnet
         run: dotnet pack TauriKit.Sidecar.slnx -c Release -o nupkg
 
+      # Obtained right before the push so the one-hour key is used well inside its lifetime.
+      - name: Log in to nuget.org (trusted publishing)
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
       - name: Push
         working-directory: dotnet
         env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
         run: dotnet nuget push "nupkg/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate

@@ -32,6 +32,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   the line — readily so on a loaded machine. It now waits (at most one second, and never past the caller's deadline) for stdout
   to close before reporting the exit, so a line printed just before exiting is returned as the line.
 
+### Changed
+
+- The NuGet publish workflow signs in to nuget.org with trusted publishing (a GitHub OIDC token exchanged for a one-hour key)
+  instead of a stored API key. Publishing needs a trusted-publishing policy for `publish-nuget.yml` on the package owner's
+  nuget.org account; the packages themselves are unchanged.
+
 ## [0.31.0] - 2026-10-31
 
 ### Added
