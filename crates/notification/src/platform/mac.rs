@@ -3,7 +3,6 @@
 //! checks for the bundle first and reports [`Permission::Unavailable`] without touching the framework.
 
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -11,7 +10,9 @@ use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Bool, ProtocolObject};
 use objc2::{define_class, msg_send, AllocAnyThread};
-use objc2_foundation::{NSBundle, NSDictionary, NSError, NSObject, NSObjectProtocol, NSString};
+use objc2_foundation::{
+    NSBundle, NSDictionary, NSError, NSObject, NSObjectProtocol, NSString, NSUUID,
+};
 use objc2_user_notifications::{
     UNAuthorizationOptions, UNAuthorizationStatus, UNMutableNotificationContent, UNNotification,
     UNNotificationDefaultActionIdentifier, UNNotificationPresentationOptions,
@@ -86,7 +87,6 @@ pub(crate) fn show(notice: &Notice) -> Result<(), Error> {
         Permission::Unavailable => return Err(Error::Unavailable),
         other => return Err(Error::NotPermitted(other)),
     }
-    static NEXT: AtomicU64 = AtomicU64::new(1);
     let content = UNMutableNotificationContent::new();
     content.setTitle(&NSString::from_str(&notice.title));
     content.setBody(&NSString::from_str(&notice.body));
@@ -105,10 +105,7 @@ pub(crate) fn show(notice: &Notice) -> Result<(), Error> {
             )
         };
     }
-    let identifier = NSString::from_str(&format!(
-        "tauri-kit-notification.{}",
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
+    let identifier = NSString::from_str(&request_identifier());
     let request =
         UNNotificationRequest::requestWithIdentifier_content_trigger(&identifier, &content, None);
     let (tx, rx) = mpsc::channel();
@@ -126,6 +123,13 @@ pub(crate) fn show(notice: &Notice) -> Result<(), Error> {
             "the notification centre did not answer".into(),
         )),
     }
+}
+
+/// A request identifier no other notice has had, in this run or an earlier one. The centre takes a request with the
+/// identifier of a notice it still holds as an update of that notice, filed without a banner — so an identifier that
+/// starts over with each run would quietly replace the unread notices an earlier run left.
+fn request_identifier() -> String {
+    format!("tauri-kit-notification.{}", NSUUID::UUID().UUIDString())
 }
 
 type Handler = Box<dyn Fn(&str) + Send + Sync>;
@@ -206,4 +210,17 @@ pub(crate) fn on_activation(handler: Handler) {
         Kept(delegate)
     });
     let _ = kept;
+}
+
+#[cfg(test)]
+mod identifier_tests {
+    use super::request_identifier;
+
+    #[test]
+    fn no_two_notices_share_an_identifier() {
+        let first = request_identifier();
+        let second = request_identifier();
+        assert!(first.starts_with("tauri-kit-notification."));
+        assert_ne!(first, second);
+    }
 }
