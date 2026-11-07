@@ -49,7 +49,8 @@
 //! - **Say where dropped files are.** A page gets dropped `File` objects but never their location;
 //!   [`drop::receive_dropped_files`] reads the location of each file the page posts back in a message
 //!   (WebView2's own way), without taking drag and drop away from the page as a framework's drop
-//!   handler does on Windows.
+//!   handler does on Windows. On macOS, [`drop::drag_pasteboard_paths`] answers the same from the
+//!   system's drag pasteboard for the names of the files the page received.
 //!
 //! A seventh is for apps that act on what the person selected in a page:
 //!

@@ -9,6 +9,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ### Added
 
+- `tauri-kit-webview` `drop::drag_pasteboard_paths(names)` (macOS): where the files a page received in its `drop` are, read
+  from the system's drag pasteboard and returned in the page's order. A page that keeps HTML5 drag and drop has no other way
+  to learn them there — the framework's drop handler, which reports paths, takes every drag the web view would see. The page
+  passes the names of the `File` objects it got; the answer is empty unless the pasteboard holds exactly those files (an
+  earlier drag's pasteboard holds others), and two files of one name from two folders are both kept. Empty on other platforms.
 - `tauri-kit-notification` (new crate, macOS and Windows): the operating system's notification permission as a value
   (`permission()` → `Granted` / `Denied` / `NotDetermined` / `Unavailable`), `request_permission()` that asks a person who has
   not been asked, and `show(&Notice { title, body, activation_id })` through the user-notification centre, shown even while the app's window is
