@@ -34,9 +34,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ### Changed
 
-- The NuGet publish workflow signs in to nuget.org with trusted publishing (a GitHub OIDC token exchanged for a one-hour key)
-  instead of a stored API key. Publishing needs a trusted-publishing policy for `publish-nuget.yml` on the package owner's
-  nuget.org account; the packages themselves are unchanged.
+- The NuGet publish workflow no longer holds a NuGet credential: it tests and packs, uploads the packages as an artifact,
+  and asks the organization's central publishing repository (`iyulab/nuget-publish`), which pushes them to nuget.org with
+  trusted publishing. The packages themselves are unchanged.
 
 ## [0.31.0] - 2026-10-31
 

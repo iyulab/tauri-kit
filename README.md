@@ -48,7 +48,8 @@ The crates share one version and are released together. Each release is a `vX.Y.
 the tag always equals the `version` in `Cargo.toml`, and [CHANGELOG.md](CHANGELOG.md) lists what each release changed. While the version is `0.x`, a minor bump (`0.1` → `0.2`)
 may break the API; a patch bump does not. Pin a tag, not a branch. The .NET package in `dotnet/` carries the same version: after the crates are
 published with `cargo publish --workspace`, the `Publish NuGet` workflow, run on the release tag
-(`gh workflow run publish-nuget.yml --ref vX.Y.Z`), tests, packs and pushes it.
+(`gh workflow run publish-nuget.yml --ref vX.Y.Z`), tests and packs it, and the organization's central
+publishing repository ([`iyulab/nuget-publish`](https://github.com/iyulab/nuget-publish)) pushes it to nuget.org.
 
 ```rust
 use std::path::Path;

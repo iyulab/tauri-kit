@@ -1,6 +1,7 @@
 name: Publish NuGet
 
-# Packs the .NET host side (dotnet/) from the release tag this runs on and pushes it to nuget.org.
+# Packs the .NET host side (dotnet/) from the release tag this runs on; the organization's central publishing
+# repository (iyulab/nuget-publish) pushes the packages to nuget.org. This workflow holds no NuGet credential.
 # The crates are published with cargo; this keeps the package under the same version.
 # Run by hand on a version tag: gh workflow run publish-nuget.yml --ref v<version>
 on:
@@ -8,14 +9,13 @@ on:
 
 permissions:
   contents: read
-  id-token: write # nuget.org trusted publishing: the OIDC token is exchanged for a one-hour key
 
 concurrency:
   group: publish-nuget
   cancel-in-progress: false
 
 jobs:
-  publish:
+  pack:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -42,15 +42,18 @@ jobs:
         working-directory: dotnet
         run: dotnet pack TauriKit.Sidecar.slnx -c Release -o nupkg
 
-      # Obtained right before the push so the one-hour key is used well inside its lifetime.
-      - name: Log in to nuget.org (trusted publishing)
-        id: login
-        uses: NuGet/login@v1
+      # Only package files: the central publisher refuses an artifact holding anything else.
+      - uses: actions/upload-artifact@v7
         with:
-          user: ${{ secrets.NUGET_USER }}
+          name: nuget-packages
+          path: |
+            dotnet/nupkg/*.nupkg
+            dotnet/nupkg/*.snupkg
+          if-no-files-found: error
+          retention-days: 1
 
-      - name: Push
-        working-directory: dotnet
-        env:
-          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
-        run: dotnet nuget push "nupkg/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+  publish:
+    needs: pack
+    uses: iyulab/nuget-publish/.github/workflows/request.yml@2166748abf716fb58855228f65fc6b8f78c2780f # main
+    permissions: {}
+    secrets: inherit
