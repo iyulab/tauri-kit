@@ -158,7 +158,9 @@ pub fn alert(title: &str, body: &str) {
     use objc2_app_kit::{NSAlert, NSAlertStyle, NSApplication};
     use objc2_foundation::NSString;
     eprintln!("{title}\n\n{body}");
-    let Some(mtm) = MainThreadMarker::new() else { return };
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
     let app = NSApplication::sharedApplication(mtm);
     // An app started from the Finder may not be frontmost yet; an alert behind other windows is
     // one nobody reads.

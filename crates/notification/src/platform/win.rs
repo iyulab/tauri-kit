@@ -81,7 +81,11 @@ fn registry_setting(id: &str) -> Permission {
     let off = dword(POLICY, "NoToastApplicationNotification") == Some(1)
         || dword(PUSH, "ToastEnabled") == Some(0)
         || dword(&format!(r"{SETTINGS}\{id}"), "Enabled") == Some(0);
-    if off { Permission::Denied } else { Permission::Granted }
+    if off {
+        Permission::Denied
+    } else {
+        Permission::Granted
+    }
 }
 
 fn dword(key: &str, name: &str) -> Option<u32> {
