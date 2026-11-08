@@ -7,6 +7,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-11-08
+
 ### Added
 
 - `tauri-kit-dialog` (new crate): one route for an app's open and save dialogs, `answer_or(&Ask { kind, title, default_path, filters },
@@ -1026,6 +1028,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - `tauri-kit-sidecar`: bundled helper processes without a console window, stopped together with
   everything they start, with readiness waits that notice a crash.
 
+[0.32.0]: https://github.com/iyulab/tauri-kit/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/iyulab/tauri-kit/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/iyulab/tauri-kit/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/iyulab/tauri-kit/compare/v0.28.0...v0.29.0
