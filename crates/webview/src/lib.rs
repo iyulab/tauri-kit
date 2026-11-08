@@ -149,9 +149,31 @@ pub fn alert(title: &str, body: &str) {
     };
 }
 
+/// Shows a message before any window exists and waits for the person to close it: a modal alert,
+/// brought to the front, when called on the main thread (where an app's setup runs); the text also
+/// goes to standard error, which is all there is when called from another thread.
+#[cfg(target_os = "macos")]
+pub fn alert(title: &str, body: &str) {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSAlert, NSAlertStyle, NSApplication};
+    use objc2_foundation::NSString;
+    eprintln!("{title}\n\n{body}");
+    let Some(mtm) = MainThreadMarker::new() else { return };
+    let app = NSApplication::sharedApplication(mtm);
+    // An app started from the Finder may not be frontmost yet; an alert behind other windows is
+    // one nobody reads.
+    #[allow(deprecated)]
+    app.activateIgnoringOtherApps(true);
+    let alert = NSAlert::new(mtm);
+    alert.setAlertStyle(NSAlertStyle::Critical);
+    alert.setMessageText(&NSString::from_str(title));
+    alert.setInformativeText(&NSString::from_str(body));
+    alert.runModal();
+}
+
 /// Shows a message before any window exists: standard error, where there is no message box to
 /// show it in without a window toolkit.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn alert(title: &str, body: &str) {
     eprintln!("{title}\n\n{body}");
 }

@@ -34,6 +34,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ### Fixed
 
+- `tauri-kit-webview`: `alert` on macOS shows a modal alert (critical style, the app brought to the front) when called on the
+  main thread, where an app's setup runs; it only wrote to standard error before, so an app started from the Finder that had
+  to stop before its first window ended without a word. The text still goes to standard error too. Windows is unchanged
+  (a message box); other systems write to standard error.
 - `tauri-kit-sidecar`: `Sidecar::wait_line` (and `Loopback::start`, which waits through it) reported `Exited` for a sidecar that
   printed its readiness line and then ended right away, when the exit was seen before the stdout reader thread had forwarded
   the line — readily so on a loaded machine. It now waits (at most one second, and never past the caller's deadline) for stdout
