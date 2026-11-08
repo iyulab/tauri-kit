@@ -8,7 +8,9 @@ use std::sync::Mutex;
 use windows::core::{Interface, HSTRING, PWSTR};
 use windows::Data::Xml::Dom::XmlDocument;
 use windows::Foundation::TypedEventHandler;
+use windows::Win32::Foundation::{ERROR_NOT_FOUND, ERROR_SUCCESS};
 use windows::Win32::System::Com::CoTaskMemFree;
+use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
 use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
 use windows::Win32::UI::Shell::GetCurrentProcessExplicitAppUserModelID;
 use windows::UI::Notifications::{
@@ -61,8 +63,43 @@ pub(crate) fn permission() -> Permission {
         // Turned off by the person, the administrator or the app's manifest: only the person can turn it
         // back on, in the system settings.
         Ok(_) => Permission::Denied,
+        // An app that is not packaged, with its id registered only under the user's classes, gets «element not
+        // found» here although its toasts show: the system keeps its setting where the Settings app writes it.
+        Err(e) if e.code() == ERROR_NOT_FOUND.to_hresult() => registry_setting(&id.to_string()),
         Err(_) => Permission::Unavailable,
     }
+}
+
+const POLICY: &str = r"Software\Policies\Microsoft\Windows\CurrentVersion\PushNotifications";
+const PUSH: &str = r"Software\Microsoft\Windows\CurrentVersion\PushNotifications";
+const SETTINGS: &str = r"Software\Microsoft\Windows\CurrentVersion\Notifications\Settings";
+
+/// The toast setting as the Settings app and the administrator's policy leave it in the user's registry: off for
+/// every app (`ToastEnabled` 0), off by policy (`NoToastApplicationNotification` 1), or off for this app
+/// (`Enabled` 0 under its id). A value that is absent is the default, on.
+fn registry_setting(id: &str) -> Permission {
+    let off = dword(POLICY, "NoToastApplicationNotification") == Some(1)
+        || dword(PUSH, "ToastEnabled") == Some(0)
+        || dword(&format!(r"{SETTINGS}\{id}"), "Enabled") == Some(0);
+    if off { Permission::Denied } else { Permission::Granted }
+}
+
+fn dword(key: &str, name: &str) -> Option<u32> {
+    let mut value = 0u32;
+    let mut size = std::mem::size_of::<u32>() as u32;
+    // SAFETY: the buffer is a u32 and its size is given; the strings live through the call.
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            &HSTRING::from(key),
+            &HSTRING::from(name),
+            RRF_RT_REG_DWORD,
+            None,
+            Some(&mut value as *mut u32 as *mut core::ffi::c_void),
+            Some(&mut size),
+        )
+    };
+    (status == ERROR_SUCCESS).then_some(value)
 }
 
 /// The system asks no question on Windows: the setting is what it is.

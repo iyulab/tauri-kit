@@ -29,7 +29,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   framework on top of the web view does not report the permission either. Run outside an app bundle (a development build started
   from a terminal) every entry answers `Unavailable` instead of reaching the framework, which would raise an exception there.
   Windows: the same calls through the shell's toasts under the app's application user model id (`set_app_user_model_id`),
-  the permission read from the toast setting — written and compiled for Windows, not yet run on a Windows machine.
+  the permission read from the toast setting. An app that is not packaged and has never shown a toast gets «element not
+  found» from that setting although its toasts show; the permission is then read where the Settings app and the
+  administrator's policy keep it in the user's registry (all toasts off, off by policy, or off for this app), so the
+  first notice is not refused. Run on Windows 11: the permission, `show` and the delivered toast are confirmed for a
+  never-used id; the click reaching `on_activation` has not been confirmed on Windows yet.
   The crate supplies no text and holds no constant of any app. Other systems answer `Unavailable` for now.
 
 ### Fixed
