@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Fixed
+
+- `TauriKit.Sidecar.Loopback.AspNetCore`: `RunAnnouncingAsync` no longer fails on a server with no address — an in-memory
+  test server's, as `WebApplicationFactory` gives an entry point that calls it. There is no port to tell, so it writes no
+  readiness line and runs until it is shut down. The failure was intermittent in such tests: the factory reports either
+  the host's start or the entry point's exception, whichever comes first. `Port()` on such a server now throws
+  `InvalidOperationException` saying so, instead of "Sequence contains no elements".
+
 ## [0.32.0] - 2026-11-08
 
 ### Added

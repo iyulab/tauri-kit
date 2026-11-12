@@ -3,6 +3,8 @@ using System.Net.Http.Headers;
 using System.Reflection;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -149,6 +151,44 @@ public sealed class LoopbackHostStaticTests
         await app.StopAsync(TestContext.Current.CancellationToken);
         await running;
         await app.DisposeAsync();
+    }
+
+    [Theory]
+    [InlineData(true)] // an in-memory test server's: an empty list of addresses
+    [InlineData(false)] // a server that says nothing of addresses
+    public async Task On_a_server_with_no_address_nothing_is_announced_and_it_runs_until_shut_down(bool saysAddresses)
+    {
+        // An in-memory test server listens nowhere: its entry point must not fail for want of a port.
+        var builder = LoopbackHost.CreateSlimBuilder([], port: null);
+        builder.Services.AddSingleton<IServer>(new NowhereServer(saysAddresses));
+        var app = builder.Build();
+        using var output = new StringWriter();
+        var running = app.RunAnnouncingAsync("helper ready port=", output);
+        var started = app.Services.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>().ApplicationStarted;
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!started.IsCancellationRequested && !running.IsCompleted && DateTime.UtcNow < deadline)
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        await Task.Delay(100, TestContext.Current.CancellationToken); // past where the line would be written
+        Assert.False(running.IsCompleted);
+        await app.StopAsync(TestContext.Current.CancellationToken);
+        await running;
+        Assert.Equal("", output.ToString());
+        Assert.Throws<InvalidOperationException>(() => app.Port());
+        await app.DisposeAsync();
+    }
+
+    private sealed class NowhereServer : IServer
+    {
+        public NowhereServer(bool saysAddresses)
+        {
+            if (saysAddresses) Features.Set<Microsoft.AspNetCore.Hosting.Server.Features.IServerAddressesFeature>(new Microsoft.AspNetCore.Hosting.Server.Features.ServerAddressesFeature());
+        }
+
+        public IFeatureCollection Features { get; } = new FeatureCollection();
+        public Task StartAsync<TContext>(IHttpApplication<TContext> application, CancellationToken cancellationToken)
+            where TContext : notnull => Task.CompletedTask;
+        public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public void Dispose() { }
     }
 
     [Fact]

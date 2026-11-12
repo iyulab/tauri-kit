@@ -3,6 +3,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -117,11 +119,20 @@ public static class LoopbackHost
     private const string ProblemJson = "application/problem+json";
 
     /// <summary>The port the application listens on, once started.</summary>
+    /// <exception cref="InvalidOperationException">It listens on no address — an in-memory test server's.</exception>
     public static int Port(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        return new Uri(app.Urls.First()).Port;
+        var url = Addresses(app).FirstOrDefault()
+            ?? throw new InvalidOperationException("The application listens on no address (an in-memory server has no port).");
+        return new Uri(url).Port;
     }
+
+    /// <summary>Where the application's server listens — none for a server that says nothing of addresses.</summary>
+    private static IEnumerable<string> Addresses(WebApplication app) =>
+        app.Services.GetService(typeof(IServer)) is IServer server
+            ? server.Features.Get<IServerAddressesFeature>()?.Addresses ?? []
+            : [];
 
     /// <summary>
     /// The readiness line for <paramref name="port"/>: the prefix, then the port, then each of <paramref name="fields"/>
@@ -147,7 +158,9 @@ public static class LoopbackHost
     /// <summary>
     /// Starts the application, writes the readiness line (to standard output unless
     /// <paramref name="output"/> is given) once it listens — with <paramref name="fields"/> after the port, see
-    /// <see cref="ReadyLine"/> — and runs until it is shut down.
+    /// <see cref="ReadyLine"/> — and runs until it is shut down. An application on a server with no address — an
+    /// in-memory test server's (see <see cref="CreateSlimBuilder"/> with no port) — has no port to tell: it writes no
+    /// line and runs until it is shut down, so the same entry point serves its tests.
     /// </summary>
     public static async Task RunAnnouncingAsync(this WebApplication app, string readyPrefix, TextWriter? output = null, IEnumerable<KeyValuePair<string, string>>? fields = null)
     {
@@ -159,10 +172,13 @@ public static class LoopbackHost
     /// <summary>The readiness line for an application already started, then its run until shutdown.</summary>
     internal static async Task AnnounceStartedAsync(WebApplication app, string readyPrefix, TextWriter? output, IEnumerable<KeyValuePair<string, string>>? fields)
     {
-        var line = ReadyLine(readyPrefix, app.Port(), fields);
-        var writer = output ?? Console.Out;
-        await writer.WriteLineAsync(line).ConfigureAwait(false);
-        await writer.FlushAsync().ConfigureAwait(false);
+        if (Addresses(app).Any())
+        {
+            var line = ReadyLine(readyPrefix, app.Port(), fields);
+            var writer = output ?? Console.Out;
+            await writer.WriteLineAsync(line).ConfigureAwait(false);
+            await writer.FlushAsync().ConfigureAwait(false);
+        }
         await app.WaitForShutdownAsync().ConfigureAwait(false);
     }
 
