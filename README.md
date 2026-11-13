@@ -39,7 +39,7 @@ tauri-kit-dialog = "0.32"
 ```
 
 The crates are published to crates.io. Depending on them from this repository instead
-(`{ git = "https://github.com/iyulab/tauri-kit", tag = "v0.32.0" }`) also works, but take the crates
+(`{ git = "https://github.com/iyulab/tauri-kit", tag = "v0.32.1" }`) also works, but take the crates
 you need in one edit: Cargo re-resolves everything reachable from a git source's already-locked
 crates when another crate from the same source is added later, which can move unrelated entries of
 `Cargo.lock` — crates that accept a range of versions of a shared dependency (such as `windows-sys`

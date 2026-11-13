@@ -7,6 +7,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+## [0.32.1] - 2026-11-13
+
 ### Fixed
 
 - `TauriKit.Sidecar.Loopback.AspNetCore`: `RunAnnouncingAsync` no longer fails on a server with no address — an in-memory
@@ -1036,6 +1038,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - `tauri-kit-sidecar`: bundled helper processes without a console window, stopped together with
   everything they start, with readiness waits that notice a crash.
 
+[0.32.1]: https://github.com/iyulab/tauri-kit/compare/v0.32.0...v0.32.1
 [0.32.0]: https://github.com/iyulab/tauri-kit/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/iyulab/tauri-kit/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/iyulab/tauri-kit/compare/v0.29.0...v0.30.0
