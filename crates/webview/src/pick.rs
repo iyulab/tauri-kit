@@ -38,25 +38,100 @@ pub struct Limits {
 
 /// A picked element, read in a world the page cannot reach — a page that rewrites `outerHTML` or
 /// `innerText` on its elements does not change what arrives here.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Element {
     /// The element's markup, cut to [`Limits::html`].
     pub html: String,
     /// Its visible text, trimmed and cut to [`Limits::text`].
     pub text: String,
+    /// Its tag name, lower case.
+    pub tag: String,
+    /// A selector that finds it again in its document (or shadow root): its id, or a `data-testid`,
+    /// `aria-label`, `name` or `title` that only it has, and positional steps from the nearest such
+    /// ancestor only when it has none of those.
+    pub selector: String,
+    /// Where it is, in CSS pixels of the web view's top document: `[left, top, width, height]`.
+    pub rect: [f64; 4],
+    /// A few computed styles, as the browser reports them.
+    pub styles: Styles,
+}
+
+/// Computed styles of a picked element.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Styles {
+    pub color: String,
+    pub background: String,
+    pub font_size: String,
 }
 
 /// How a pick ended. Reported once per [`start`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     Picked(Element),
     /// Esc, [`clear`], a new [`start`], or a click where there is no element.
     Cancelled,
 }
 
-#[cfg_attr(not(windows), allow(dead_code))]
 fn cut(text: &str, limit: usize) -> String {
     text.chars().take(limit).collect()
+}
+
+/// A function, called with the element as `this` and the two limits, that describes it as a JSON
+/// string — run in a world the page cannot reach.
+const DESCRIBE: &str = r#"function (htmlLimit, textLimit) {
+  const el = this, doc = el.ownerDocument, view = doc.defaultView;
+  const esc = (s) => (view.CSS && view.CSS.escape) ? view.CSS.escape(s) : String(s).replace(/[^\w-]/g, (c) => '\\' + c);
+  const root = el.getRootNode();
+  const unique = (sel) => { try { return root.querySelectorAll(sel).length === 1; } catch { return false; } };
+  const anchor = (e) => {
+    if (e.id && unique('#' + esc(e.id))) return '#' + esc(e.id);
+    for (const a of ['data-testid', 'aria-label', 'name', 'title']) {
+      const v = e.getAttribute(a);
+      if (v) { const s = e.localName + '[' + a + '="' + v.replace(/["\\]/g, '\\$&') + '"]'; if (unique(s)) return s; }
+    }
+    return null;
+  };
+  let selector = anchor(el);
+  if (!selector) {
+    const parts = [];
+    for (let e = el; e && e.nodeType === 1; e = e.parentElement) {
+      const a = e === el ? null : anchor(e);
+      if (a) { parts.unshift(a); break; }
+      let n = 1;
+      for (let s = e.previousElementSibling; s; s = s.previousElementSibling) if (s.localName === e.localName) n++;
+      parts.unshift(e.localName + ':nth-of-type(' + n + ')');
+    }
+    selector = parts.join(' > ');
+  }
+  const b = el.getBoundingClientRect();
+  let x = b.left, y = b.top, w = view;
+  for (let i = 0; w && w.frameElement && i < 16; i++) { const f = w.frameElement.getBoundingClientRect(); x += f.left + w.frameElement.clientLeft; y += f.top + w.frameElement.clientTop; w = w.parent; }
+  const style = view.getComputedStyle(el);
+  return JSON.stringify({
+    html: String(el.outerHTML || '').slice(0, htmlLimit),
+    text: String(el.innerText || el.textContent || '').trim().slice(0, textLimit),
+    tag: el.localName, selector, rect: [x, y, b.width, b.height],
+    styles: { color: style.color, background: style.backgroundColor, fontSize: style.fontSize },
+  });
+}"#;
+
+/// The element a [`DESCRIBE`] answer names, cut to `limits` — `None` when it is not one.
+#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+fn element_of(found: &serde_json::Value, limits: Limits) -> Option<Element> {
+    let text = |v: &serde_json::Value| v.as_str().unwrap_or("").to_owned();
+    let (x, y, w, h) = rect_of(found)?;
+    Some(Element {
+        html: cut(found["html"].as_str()?, limits.html),
+        text: cut(found["text"].as_str().unwrap_or("").trim(), limits.text),
+        tag: text(&found["tag"]),
+        selector: text(&found["selector"]),
+        rect: [x, y, w, h],
+        styles: Styles {
+            color: text(&found["styles"]["color"]),
+            background: text(&found["styles"]["background"]),
+            font_size: text(&found["styles"]["fontSize"]),
+        },
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -72,7 +147,7 @@ pub use windows_pick::{clear, start};
 fn locate_script(x: f64, y: f64, full: Option<Limits>) -> String {
     let tail = match full {
         Some(limits) => format!(
-            "globalThis.pickedElement = el;\nreturn JSON.stringify({{ rect, html: String(el.outerHTML || '').slice(0, {}), text: String(el.innerText || el.textContent || '').trim().slice(0, {}) }});",
+            "globalThis.pickedElement = el;\nreturn ({DESCRIBE}).call(el, {}, {});",
             limits.html, limits.text
         ),
         None => "return JSON.stringify({ rect });".to_owned(),
@@ -111,10 +186,8 @@ for (let i = 0; w && w.frameElement && i < 16; i++) { const f = w.frameElement.g
 return JSON.stringify({ rect: [x, y, b.width, b.height] });"#;
 
 /// A rectangle of the page, in CSS pixels: left, top, width, height.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 type Rect = (f64, f64, f64, f64);
 
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn rect_of(found: &serde_json::Value) -> Option<Rect> {
     let r = found.get("rect")?.as_array()?;
     Some((
@@ -127,7 +200,7 @@ fn rect_of(found: &serde_json::Value) -> Option<Rect> {
 
 #[cfg(target_os = "macos")]
 mod mac {
-    use super::{locate_script, rect_of, Element, Event, Limits, Look, Rect, REMEASURE};
+    use super::{element_of, locate_script, rect_of, Event, Limits, Look, Rect, REMEASURE};
     use block2::RcBlock;
     use objc2::rc::{Allocated, Retained, Weak};
     use objc2::runtime::AnyObject;
@@ -426,11 +499,10 @@ mod mac {
                 window.makeFirstResponder(Some(&view));
             }
             follow(&view, &pick);
-            let element = Element {
-                html: found["html"].as_str().unwrap_or("").to_owned(),
-                text: found["text"].as_str().unwrap_or("").to_owned(),
-            };
-            (pick.on_event)(Event::Picked(element));
+            match element_of(&found, limits) {
+                Some(element) => (pick.on_event)(Event::Picked(element)),
+                None => clear(&view),
+            }
         });
     }
 
@@ -479,7 +551,7 @@ mod mac {
 
 #[cfg(windows)]
 mod windows_pick {
-    use super::{cut, Element, Event, Limits, Look};
+    use super::{element_of, Event, Limits, Look, DESCRIBE};
     use std::cell::{Cell, RefCell};
     use std::collections::HashMap;
     use std::rc::Rc;
@@ -640,36 +712,30 @@ mod windows_pick {
         Ok(())
     }
 
-    /// Reads the picked node — markup, then visible text in a world of this module's own — and
-    /// leaves a border on it.
+    /// Describes the picked node in a world of this module's own (the page cannot change what it
+    /// answers) and leaves a border on it. A node that world does not reach (in a frame) is read in
+    /// its frame's own.
     fn read(pick: Rc<Pick>, node: i64, limits: Limits) {
         let core = pick.core.clone();
         let none =
             serde_json::json!({ "mode": "none", "highlightConfig": highlight(pick.look, true) });
         call(&core, "Overlay.setInspectMode", none, |_| {});
-        let html_pick = pick.clone();
-        call(
-            &core,
-            "DOM.getOuterHTML",
-            serde_json::json!({ "backendNodeId": node }),
-            move |answer| {
-                let html = answer
-                    .ok()
-                    .and_then(|a| a["outerHTML"].as_str().map(|h| cut(h, limits.html)))
-                    .unwrap_or_default();
-                text(&html_pick.core.clone(), node, move |text| {
-                    let border = serde_json::json!({ "backendNodeId": node, "highlightConfig": highlight(html_pick.look, false) });
-                    call(&html_pick.core, "Overlay.highlightNode", border, |_| {});
-                    let text = cut(text.trim(), limits.text);
-                    (html_pick.on_event)(Event::Picked(Element { html, text }));
-                });
-            },
-        );
+        describe(&core, node, limits, move |found| {
+            let border = serde_json::json!({ "backendNodeId": node, "highlightConfig": highlight(pick.look, false) });
+            call(&pick.core, "Overlay.highlightNode", border, |_| {});
+            match found.and_then(|found| element_of(&found, limits)) {
+                Some(element) => (pick.on_event)(Event::Picked(element)),
+                None => (pick.on_event)(Event::Cancelled),
+            }
+        });
     }
 
-    /// The node's visible text, read in an isolated world (the page cannot change what it answers);
-    /// a node in a frame that world does not reach is read in the frame's own.
-    fn text(core: &ICoreWebView2, node: i64, then: impl FnOnce(String) + 'static) {
+    fn describe(
+        core: &ICoreWebView2,
+        node: i64,
+        limits: Limits,
+        then: impl FnOnce(Option<serde_json::Value>) + 'static,
+    ) {
         let core2 = core.clone();
         call(
             core,
@@ -679,69 +745,67 @@ mod windows_pick {
                 let frame = tree
                     .ok()
                     .and_then(|t| t["frameTree"]["frame"]["id"].as_str().map(str::to_owned));
-                let Some(frame) = frame else {
-                    return then(String::new());
-                };
+                let world = serde_json::json!({ "frameId": frame, "worldName": "tauri-kit-pick" });
                 let core3 = core2.clone();
-                call(
-                    &core2,
-                    "Page.createIsolatedWorld",
-                    serde_json::json!({ "frameId": frame, "worldName": "tauri-kit-pick" }),
-                    move |world| {
-                        let context = world.ok().and_then(|w| w["executionContextId"].as_i64());
-                        let core4 = core3.clone();
-                        let resolve = move |params: serde_json::Value, then: Box<dyn FnOnce(Option<String>)>| {
-                    call(&core4, "DOM.resolveNode", params, move |object| then(object.ok().and_then(|o| o["object"]["objectId"].as_str().map(str::to_owned))));
-                };
-                        let core5 = core3.clone();
-                        let read_object = move |object: Option<String>| {
-                            let Some(object) = object else {
-                                return then(String::new());
-                            };
-                            let function = "function () { return String(this.innerText || this.textContent || \"\"); }";
-                            let core6 = core5.clone();
-                            call(
-                                &core5,
-                                "Runtime.callFunctionOn",
-                                serde_json::json!({ "objectId": object, "functionDeclaration": function, "returnByValue": true }),
-                                move |read| {
-                                    call(
-                                        &core6,
-                                        "Runtime.releaseObject",
-                                        serde_json::json!({ "objectId": object }),
-                                        |_| {},
-                                    );
-                                    then(
-                                        read.ok()
-                                            .and_then(|r| {
-                                                r["result"]["value"].as_str().map(str::to_owned)
-                                            })
-                                            .unwrap_or_default(),
-                                    );
-                                },
-                            );
-                        };
-                        match context {
-                            Some(context) => {
-                                let resolve2 = resolve.clone();
-                                resolve(
-                                    serde_json::json!({ "backendNodeId": node, "executionContextId": context }),
-                                    Box::new(move |object| match object {
-                                        Some(object) => read_object(Some(object)),
-                                        None => resolve2(
-                                            serde_json::json!({ "backendNodeId": node }),
-                                            Box::new(read_object),
-                                        ),
-                                    }),
-                                );
-                            }
-                            None => resolve(
-                                serde_json::json!({ "backendNodeId": node }),
-                                Box::new(read_object),
-                            ),
+                call(&core2, "Page.createIsolatedWorld", world, move |world| {
+                    let context = world.ok().and_then(|w| w["executionContextId"].as_i64());
+                    let resolve = {
+                        let core = core3.clone();
+                        move |params: serde_json::Value, then: Box<dyn FnOnce(Option<String>)>| {
+                            call(&core, "DOM.resolveNode", params, move |object| {
+                                then(object.ok().and_then(|o| {
+                                    o["object"]["objectId"].as_str().map(str::to_owned)
+                                }))
+                            });
                         }
-                    },
-                );
+                    };
+                    let run = {
+                        let core = core3.clone();
+                        move |object: Option<String>| {
+                            let Some(object) = object else {
+                                return then(None);
+                            };
+                            let params = serde_json::json!({
+                                "objectId": object,
+                                "functionDeclaration": DESCRIBE,
+                                "arguments": [{ "value": limits.html }, { "value": limits.text }],
+                                "returnByValue": true,
+                            });
+                            let release = core.clone();
+                            call(&core, "Runtime.callFunctionOn", params, move |answer| {
+                                call(
+                                    &release,
+                                    "Runtime.releaseObject",
+                                    serde_json::json!({ "objectId": object }),
+                                    |_| {},
+                                );
+                                then(answer.ok().and_then(|a| {
+                                    a["result"]["value"]
+                                        .as_str()
+                                        .and_then(|json| serde_json::from_str(json).ok())
+                                }));
+                            });
+                        }
+                    };
+                    match context {
+                        Some(context) => {
+                            let fallback = resolve.clone();
+                            resolve(
+                                serde_json::json!({ "backendNodeId": node, "executionContextId": context }),
+                                Box::new(move |object| match object {
+                                    Some(object) => run(Some(object)),
+                                    None => fallback(
+                                        serde_json::json!({ "backendNodeId": node }),
+                                        Box::new(run),
+                                    ),
+                                }),
+                            );
+                        }
+                        None => {
+                            resolve(serde_json::json!({ "backendNodeId": node }), Box::new(run))
+                        }
+                    }
+                });
             },
         );
     }
@@ -777,6 +841,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn reads_an_element_and_cuts_it_by_characters() {
+        let found = serde_json::json!({ "html": "<p id=\"a\">가나다</p>", "text": " 가나다 ", "tag": "p", "selector": "#a",
+            "rect": [1.0, 2.0, 3.0, 4.0], "styles": { "color": "rgb(0, 0, 0)", "background": "rgba(0, 0, 0, 0)", "fontSize": "16px" } });
+        let element = element_of(&found, Limits { html: 5, text: 2 }).unwrap();
+        assert_eq!(
+            (element.html.as_str(), element.text.as_str()),
+            ("<p id", "가나")
+        );
+        assert_eq!(
+            (
+                element.tag.as_str(),
+                element.selector.as_str(),
+                element.rect
+            ),
+            ("p", "#a", [1.0, 2.0, 3.0, 4.0])
+        );
+        assert_eq!(element.styles.font_size, "16px");
+        assert_eq!(
+            element_of(&serde_json::Value::Null, Limits { html: 5, text: 2 }),
+            None
+        );
+    }
+
+    #[test]
     fn cuts_by_characters() {
         assert_eq!(cut("가나다라", 2), "가나");
         assert_eq!(cut("ab", 5), "ab");
@@ -803,7 +891,7 @@ mod tests {
                 text: 300,
             }),
         );
-        assert!(full.contains(".slice(0, 4000)") && full.contains(".slice(0, 300)"));
+        assert!(full.contains(".call(el, 4000, 300)") && full.contains("getComputedStyle"));
         assert!(full.contains("globalThis.pickedElement = el"));
     }
 }

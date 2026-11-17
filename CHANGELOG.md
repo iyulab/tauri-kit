@@ -23,7 +23,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - `tauri-kit-webview` `pick`: let the person pick an element of a page, as a browser's "select an element" tool does, with
   nothing put into the page — the page cannot see the picking, stop it, or answer with an element of its choosing.
   `start(view, Look, Limits, on_event)` highlights the element under the pointer; a click hands over its markup and visible
-  text (`Event::Picked(Element { html, text })`, read where the page's scripts cannot change the answer) and leaves a border
+  text, tag, a selector that finds it again (its id or a label only it has; positional steps only as a fallback), its box in
+  the web view's top document and a few computed styles (`Event::Picked(Element { .. })`, read where the page's scripts
+  cannot change the answer) and leaves a border
   on it that follows it while the page takes clicks again; Esc, a new `start` or `clear` ends a pick under way
   (`Event::Cancelled`), and `clear` removes the border. Elements in open shadow trees and same-origin frames are picked as
   themselves. Windows: the browser's inspect mode (DevTools `Overlay.setInspectMode`), which draws the highlight; macOS: a
