@@ -81,6 +81,32 @@
 //!   keeps `window.opener` for a sized window (sign-in and payment pages hand their result back through it) and leaves
 //!   the rest to the app; [`popup::close_window_on_script_close`] closes such a window when its page closes itself.
 //!   Who asked comes from WebView2's `IsUserInitiated` ([`popup`] says how on each platform).
+//! - **Let the person point at a part of the page.** [`pick::start`] highlights what is under the pointer and hands over
+//!   the element picked — markup, text, a selector, its box, a few styles — with nothing put into the page.
+//! - **Keep the app's keys the app's.** [`keys::intercept`] sees each key press before the page does; a key the app
+//!   takes never reaches the page.
+//!
+//! # Showing a page the app does not trust
+//!
+//! A web view of the app's window that shows a page someone else wrote — a site, a generated app, a document — is put
+//! together from the pieces above and two settings that are the app's own, since this crate does not depend on the
+//! framework:
+//!
+//! 1. **No command reaches it.** In Tauri, give the web view a label that no capability file lists (under `windows` or
+//!    `webviews`), and do not list the page's origin under any capability's `remote.urls`. Every command the page
+//!    invokes — the app's and every plugin's — is then refused. Add no initialization script to it. A test should prove
+//!    it: from the page, `window.__TAURI_INTERNALS__.invoke(…)` of a command the app has must be rejected.
+//! 2. **It stays on its origin.** Build it on an allowed address, lock it ([`lock_navigation`] on Windows,
+//!    [`NavigationLock::decide`] in the builder's navigation handler elsewhere), then navigate to the content.
+//! 3. **Windows it opens are decided, not taken.** Feed each request to [`popup::opening`]; open
+//!    [`popup::Opening::Elsewhere`] where the app opens addresses (or ask first).
+//! 4. **Nothing it types is kept.** Turn autofill off on the builder and call [`forget_form_entries`].
+//! 5. **The app's keys and the person's pointing stay out of its reach**: [`keys::intercept`], [`pick`].
+//! 6. **It can fail alone.** [`failure::watch`] reports an ended render process (Windows) and [`failure::reload`]
+//!    brings it back; the app's own web view is not affected.
+//!
+//! What this does not stop: a page can still send data out without navigating (images, `fetch`, beacons, WebSocket,
+//! WebRTC). That is the response's Content-Security-Policy's to stop — see [`lock`].
 //!
 //! On macOS and Linux the system web view is part of the operating system: [`runtime`] answers
 //! [`Runtime::System`] and there is no profile to clear.

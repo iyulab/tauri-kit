@@ -40,6 +40,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   keyboard layout). Windows: WebView2's `AcceleratorKeyPressed`, and `watch_focus` reports `Focus::In` / `Focus::Out`;
   macOS: a local event monitor, kept while the returned `Intercept` lives, that takes only keys sent to the web view's
   window while the web view (or a view inside it) is the first responder. Focus events on macOS are not there yet.
+- `tauri-kit-webview` docs: «Showing a page the app does not trust» — how a web view for a page someone else wrote is
+  put together: no command reaches it (a label outside every capability, its origin under no `remote.urls`, no
+  initialization script, and a test that a command invoked from the page is refused), the navigation lock, `popup`,
+  autofill off, `keys` and `pick`, and `failure`; and what it leaves to the response's Content-Security-Policy.
 
 ## [0.32.1] - 2026-11-13
 
