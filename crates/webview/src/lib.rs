@@ -89,6 +89,7 @@ pub mod caption;
 pub mod context_menu;
 pub mod drop;
 pub mod failure;
+pub mod keys;
 pub mod lock;
 pub mod pdf;
 pub mod pick;
