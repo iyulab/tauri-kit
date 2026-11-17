@@ -34,6 +34,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - `tauri-kit-webview` feature `automation`: `forwarded_browser_arguments` forwards the debugging port a test run asks for
   in a release build as well, so a probe or a capture tool can reach a packaged build's web views — child web views
   included when they are given the same arguments, as they then share the window's browser process. Off by default; a build shipped to people must not enable it.
+- `tauri-kit-webview` `keys`: keys the app takes before the page. `intercept(view, take)` hands each key press to `take`
+  as a `Stroke { key, ctrl, shift, alt, meta }` before the page sees it; a press it takes never reaches the page, so a
+  page can neither swallow the app's keys nor see them. `Key` names keys the same on both platforms (letters follow the
+  keyboard layout). Windows: WebView2's `AcceleratorKeyPressed`, and `watch_focus` reports `Focus::In` / `Focus::Out`;
+  macOS: a local event monitor, kept while the returned `Intercept` lives, that takes only keys sent to the web view's
+  window while the web view (or a view inside it) is the first responder. Focus events on macOS are not there yet.
 
 ## [0.32.1] - 2026-11-13
 
