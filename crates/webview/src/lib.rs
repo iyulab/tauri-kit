@@ -91,6 +91,7 @@ pub mod drop;
 pub mod failure;
 pub mod lock;
 pub mod pdf;
+pub mod pick;
 pub mod popup;
 pub mod taskbar;
 

@@ -20,6 +20,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   new-window handler does not pass on; `block_scripted_windows` (macOS) turns on the system web view's popup blocker, off
   by default there, after which every request reaching the handler came from the person. A window held by
   `lock_navigation` needs none of these: the lock reports each request with who asked.
+- `tauri-kit-webview` `pick`: let the person pick an element of a page, as a browser's "select an element" tool does, with
+  nothing put into the page — the page cannot see the picking, stop it, or answer with an element of its choosing.
+  `start(view, Look, Limits, on_event)` highlights the element under the pointer; a click hands over its markup and visible
+  text (`Event::Picked(Element { html, text })`, read where the page's scripts cannot change the answer) and leaves a border
+  on it that follows it while the page takes clicks again; Esc, a new `start` or `clear` ends a pick under way
+  (`Event::Cancelled`), and `clear` removes the border. Elements in open shadow trees and same-origin frames are picked as
+  themselves. Windows: the browser's inspect mode (DevTools `Overlay.setInspectMode`), which draws the highlight; macOS: a
+  transparent view over the web view, with the element found in a script world of the crate's own. Adds `serde_json` to
+  the crate (already used across the workspace).
 
 ## [0.32.1] - 2026-11-13
 
