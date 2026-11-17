@@ -134,7 +134,7 @@ pub fn block_scripted_windows(web_view: &objc2_web_kit::WKWebView) {
 /// Closes the window that holds the web view when its page calls `window.close()` — for a window
 /// made for a page's request ([`Opening::KeepOpener`]); a page in the app's own window should not
 /// close it. The window is closed the way its close button does, so the app's close handling runs.
-/// Call once per web view, on its thread.
+/// Call once per web view, on its thread, after the web view is in its window.
 #[cfg(windows)]
 pub fn close_window_on_script_close(
     controller: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller,
@@ -152,15 +152,16 @@ pub fn close_window_on_script_close(
         controller.ParentWindow(&mut parent)?;
         controller.CoreWebView2()?
     };
-    let parent = parent.0 as isize;
+    // Found now: by the time the page closes, the framework may already have destroyed the child
+    // window the web view sat in, and a destroyed window has no ancestors.
+    // SAFETY: a plain window call on the caller's live window.
+    let root = unsafe { GetAncestor(parent.0 as _, GA_ROOT) } as isize;
+    if root == 0 {
+        return Err(windows_core::Error::from_thread());
+    }
     let handler = WindowCloseRequestedEventHandler::create(Box::new(move |_, _| {
-        // SAFETY: plain window calls; a window that is gone makes them fail, which is ignored.
-        unsafe {
-            let root = GetAncestor(parent as _, GA_ROOT);
-            if !root.is_null() {
-                PostMessageW(root, WM_CLOSE, 0, 0);
-            }
-        }
+        // SAFETY: a plain window call; a window that is already gone makes it fail, which is ignored.
+        unsafe { PostMessageW(root as _, WM_CLOSE, 0, 0) };
         Ok(())
     }));
     let mut token = 0i64;
