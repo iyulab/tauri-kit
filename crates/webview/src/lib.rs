@@ -30,7 +30,7 @@
 //!   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`, but current runtimes do not apply that variable to an
 //!   app that passes browser arguments of its own — and a Tauri app always does, its web view library
 //!   passes defaults. [`forwarded_browser_arguments`] gives the window those arguments itself, in a
-//!   debug build only.
+//!   debug build only — or, with the `automation` feature, in a packaged build made for probes.
 //!
 //! A fourth is for windows that show content the app does not trust:
 //!
@@ -246,6 +246,12 @@ pub const ADDITIONAL_BROWSER_ARGUMENTS_VAR: &str = "WEBVIEW2_ADDITIONAL_BROWSER_
 /// [`ADDITIONAL_BROWSER_ARGUMENTS_VAR`] holds — or `None` when the variable is unset or empty, and
 /// always in a release build, so an installed app never opens a debugging port because of a variable.
 ///
+/// Built with the `automation` feature, a release build forwards them too — for a packaged build made
+/// for probes or captures, which have to reach every web view of the window: give child web views the same arguments,
+/// so they share the window's browser process and with it the debugging port (WebView2 refuses a
+/// second set of arguments for the same profile folder). Never enable it in a build shipped to people:
+/// anyone who can set the variable could then drive the app.
+///
 /// Current WebView2 runtimes do not apply the variable to an app that passes browser arguments of its
 /// own, and a Tauri app always does. Giving the window arguments, though, replaces the ones its web
 /// view library passes by default, so `base` repeats them — for a Tauri app on wry,
@@ -264,7 +270,7 @@ pub const ADDITIONAL_BROWSER_ARGUMENTS_VAR: &str = "WEBVIEW2_ADDITIONAL_BROWSER_
 ///
 /// "Debug build" is this crate's: a dependency is built with the profile of the app that uses it.
 pub fn forwarded_browser_arguments(base: &str) -> Option<String> {
-    if !cfg!(debug_assertions) {
+    if !cfg!(debug_assertions) && !cfg!(feature = "automation") {
         return None;
     }
     forward(

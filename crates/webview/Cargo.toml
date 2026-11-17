@@ -11,6 +11,11 @@ categories = ["gui", "os"]
 
 # The web view types an app holds come from the same `webview2-com` its Tauri version uses; the
 # major version here follows Tauri's, so a controller the app passes in is the type expected here.
+[features]
+# Forward the debugging port a test run asks for in a release build as well (`forwarded_browser_arguments`) — for a
+# packaged build made for probes or captures, never one shipped to people.
+automation = []
+
 [dependencies]
 # DevTools answers (Windows) and script-world answers (macOS) of `pick` are JSON.
 serde_json = "1"

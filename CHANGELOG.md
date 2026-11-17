@@ -31,6 +31,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   themselves. Windows: the browser's inspect mode (DevTools `Overlay.setInspectMode`), which draws the highlight; macOS: a
   transparent view over the web view, with the element found in a script world of the crate's own. Adds `serde_json` to
   the crate (already used across the workspace).
+- `tauri-kit-webview` feature `automation`: `forwarded_browser_arguments` forwards the debugging port a test run asks for
+  in a release build as well, so a probe or a capture tool can reach a packaged build's web views — child web views
+  included when they are given the same arguments, as they then share the window's browser process. Off by default; a build shipped to people must not enable it.
 
 ## [0.32.1] - 2026-11-13
 
