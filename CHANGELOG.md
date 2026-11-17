@@ -44,6 +44,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   put together: no command reaches it (a label outside every capability, its origin under no `remote.urls`, no
   initialization script, and a test that a command invoked from the page is refused), the navigation lock, `popup`,
   autofill off, `keys` and `pick`, and `failure`; and what it leaves to the response's Content-Security-Policy.
+- `tauri-kit-webview` `fullscreen::watch` (Windows): reports when the page enters and leaves full screen
+  (`requestFullscreen()`, Esc), so an app whose web view is one part of the window can give it the whole window — the
+  web view lays the element over its own bounds only. The docs state that on Windows a Tauri app's window itself goes
+  to full screen whenever a web view holds a full-screen element, with no setting to keep it windowed. macOS: not yet.
 
 ## [0.32.1] - 2026-11-13
 

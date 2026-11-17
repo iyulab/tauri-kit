@@ -83,6 +83,8 @@
 //!   Who asked comes from WebView2's `IsUserInitiated` ([`popup`] says how on each platform).
 //! - **Let the person point at a part of the page.** [`pick::start`] highlights what is under the pointer and hands over
 //!   the element picked — markup, text, a selector, its box, a few styles — with nothing put into the page.
+//! - **Give a page's full screen the whole window.** [`fullscreen::watch`] says when the page enters and leaves full
+//!   screen, so an app whose web view is one part of the window can give it the rest.
 //! - **Keep the app's keys the app's.** [`keys::intercept`] sees each key press before the page does; a key the app
 //!   takes never reaches the page.
 //!
@@ -115,6 +117,7 @@ pub mod caption;
 pub mod context_menu;
 pub mod drop;
 pub mod failure;
+pub mod fullscreen;
 pub mod keys;
 pub mod lock;
 pub mod pdf;
