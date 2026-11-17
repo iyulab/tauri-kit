@@ -75,6 +75,13 @@
 //!   which process, why, the exit code — and [`failure::reload`] restarts a page whose render process ended; what the app
 //!   tells the person, reports or retries stays the app's.
 //!
+//! An eleventh is for windows that show web pages:
+//!
+//! - **Open the windows a page asks for as a browser does.** [`popup::opening`] refuses what the person did not ask for,
+//!   keeps `window.opener` for a sized window (sign-in and payment pages hand their result back through it) and leaves
+//!   the rest to the app; [`popup::close_window_on_script_close`] closes such a window when its page closes itself.
+//!   Who asked comes from WebView2's `IsUserInitiated` ([`popup`] says how on each platform).
+//!
 //! On macOS and Linux the system web view is part of the operating system: [`runtime`] answers
 //! [`Runtime::System`] and there is no profile to clear.
 
@@ -84,6 +91,7 @@ pub mod drop;
 pub mod failure;
 pub mod lock;
 pub mod pdf;
+pub mod popup;
 pub mod taskbar;
 
 #[cfg(windows)]

@@ -7,6 +7,20 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+
+- `tauri-kit-webview` `popup`: the windows a page opens, settled as a browser settles them. `opening(Request { url,
+  user_initiated, sized })` refuses what the person did not ask for and anything that is not a web page, answers
+  `KeepOpener` for a sized `window.open` (and a sized `about:blank`) — a sign-in or payment page hands its result back
+  through `window.opener`, which a window opened anywhere else breaks — and leaves the rest to the app (`Elsewhere`).
+  `close_window_on_script_close` closes the window that holds such a page when the page calls `window.close()`; until now
+  the framework removed the web view and left its window standing, empty (Windows: the root window gets `WM_CLOSE`, so the
+  app's close handling runs; macOS: the UI delegate's `webViewDidClose:`, closing only windows marked by the call). Who
+  asked: `report_new_windows` (Windows) reports WebView2's `IsUserInitiated` for each request, which the framework's
+  new-window handler does not pass on; `block_scripted_windows` (macOS) turns on the system web view's popup blocker, off
+  by default there, after which every request reaching the handler came from the person. A window held by
+  `lock_navigation` needs none of these: the lock reports each request with who asked.
+
 ## [0.32.1] - 2026-11-13
 
 ### Fixed
