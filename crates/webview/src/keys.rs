@@ -6,7 +6,7 @@
 //! itself. [`intercept`] hands each key press to the app **before** the page sees it; a key the app
 //! takes never reaches the page, every other key does. Nothing is put into the page.
 //!
-//! On Windows [`watch_focus`] also reports when the web view gains or loses keyboard focus.
+//! [`watch_focus`] also reports when the web view gains or loses keyboard focus.
 //!
 //! - *Windows*: WebView2's `AcceleratorKeyPressed`, which runs before the page for every key press
 //!   and key held with a modifier.
@@ -205,7 +205,8 @@ pub fn intercept(
     Ok(())
 }
 
-/// Reports when the web view gains or loses keyboard focus. Call once per web view, on its thread.
+/// Reports when the web view gains or loses keyboard focus (WebView2's `GotFocus` and `LostFocus`).
+/// Call once per web view, on its thread.
 #[cfg(windows)]
 pub fn watch_focus(
     controller: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller,
@@ -304,6 +305,79 @@ pub fn intercept(
         NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::KeyDown, &handler)
     };
     Intercept { monitor }
+}
+
+/// Keeps the observers of [`watch_focus`] in place; dropping it removes them.
+#[cfg(target_os = "macos")]
+pub struct FocusWatch {
+    observers: Vec<
+        objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2::runtime::NSObjectProtocol>>,
+    >,
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for FocusWatch {
+    fn drop(&mut self) {
+        let center = objc2_foundation::NSNotificationCenter::defaultCenter();
+        for observer in self.observers.drain(..) {
+            // SAFETY: an observer this value added to the default center.
+            unsafe { center.removeObserver(observer.as_ref()) };
+        }
+    }
+}
+
+/// Reports when the web view gains or loses keyboard focus: it has focus while its window is the key
+/// window and the window's first responder is the web view or inside it. The first report is the
+/// state at the first window update after the call; after that only changes are reported. Keep the
+/// returned [`FocusWatch`] for as long as focus should be reported. Call on the main thread.
+#[cfg(target_os = "macos")]
+pub fn watch_focus(
+    web_view: &objc2_web_kit::WKWebView,
+    on_focus: impl Fn(Focus) + 'static,
+) -> FocusWatch {
+    use block2::RcBlock;
+    use objc2::rc::Weak;
+    use objc2_app_kit::{NSView, NSWindowDidResignKeyNotification, NSWindowDidUpdateNotification};
+    use objc2_foundation::{NSNotification, NSNotificationCenter};
+    use std::cell::Cell;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use std::ptr::NonNull;
+    use std::rc::Rc;
+
+    let weak = Weak::new(web_view);
+    let last: Rc<Cell<Option<Focus>>> = Rc::new(Cell::new(None));
+    let on_focus: Rc<dyn Fn(Focus)> = Rc::new(on_focus);
+    // Any window's update or loss of key status may move focus into or out of the web view; the
+    // check itself is two property reads, and a report is made only when the answer changes.
+    let handler = RcBlock::new(move |_: NonNull<NSNotification>| {
+        let Some(view) = weak.load() else { return };
+        let now = match view.window() {
+            Some(window) if window.isKeyWindow() => window
+                .firstResponder()
+                .and_then(|responder| responder.downcast::<NSView>().ok())
+                .is_some_and(|responder| responder.isDescendantOf(&view)),
+            _ => false,
+        };
+        let now = if now { Focus::In } else { Focus::Out };
+        if last.replace(Some(now)) != Some(now) {
+            let _ = catch_unwind(AssertUnwindSafe(|| on_focus(now)));
+        }
+    });
+    let center = NSNotificationCenter::defaultCenter();
+    // SAFETY: observers on the default center for window notifications, which AppKit posts on the
+    // main thread; the block runs where the notification is posted. Removed when `FocusWatch` drops.
+    let observers = unsafe {
+        [
+            NSWindowDidUpdateNotification,
+            NSWindowDidResignKeyNotification,
+        ]
+    }
+    .into_iter()
+    .map(|name| unsafe {
+        center.addObserverForName_object_queue_usingBlock(Some(name), None, None, &handler)
+    })
+    .collect();
+    FocusWatch { observers }
 }
 
 #[cfg(test)]

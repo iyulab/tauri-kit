@@ -37,9 +37,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - `tauri-kit-webview` `keys`: keys the app takes before the page. `intercept(view, take)` hands each key press to `take`
   as a `Stroke { key, ctrl, shift, alt, meta }` before the page sees it; a press it takes never reaches the page, so a
   page can neither swallow the app's keys nor see them. `Key` names keys the same on both platforms (letters follow the
-  keyboard layout). Windows: WebView2's `AcceleratorKeyPressed`, and `watch_focus` reports `Focus::In` / `Focus::Out`;
-  macOS: a local event monitor, kept while the returned `Intercept` lives, that takes only keys sent to the web view's
-  window while the web view (or a view inside it) is the first responder. Focus events on macOS are not there yet.
+  keyboard layout). `watch_focus` reports `Focus::In` / `Focus::Out`. Windows: WebView2's `AcceleratorKeyPressed`, and
+  `GotFocus` / `LostFocus` for focus. macOS: a local event monitor, kept while the returned `Intercept` lives, that takes
+  only keys sent to the web view's window while the web view (or a view inside it) is the first responder; focus is
+  that same test while the window is the key window, checked on window updates and on the window losing key status,
+  and reported when it changes, for as long as the returned `FocusWatch` lives.
 - `tauri-kit-webview` docs: «Showing a page the app does not trust» — how a web view for a page someone else wrote is
   put together: no command reaches it (a label outside every capability, its origin under no `remote.urls`, no
   initialization script, and a test that a command invoked from the page is refused), the navigation lock, `popup`,
