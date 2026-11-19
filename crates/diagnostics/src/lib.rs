@@ -95,6 +95,7 @@
 //!   With both on, `appinsights` decides.
 
 mod event;
+mod panic;
 mod queue;
 mod report;
 mod session;
@@ -109,6 +110,7 @@ pub use event::{
     Registry, RegistryError, Value, Why, DROPPED_EVENT, MAX_COUNT, MAX_DURATION, MAX_FIELDS,
     MAX_PER_EVENT, MAX_VALUES,
 };
+pub use panic::{PanicHook, MAX_PANIC_LOG_BYTES};
 pub use queue::{mark_sent, pending, unsent, Batch, Pending, Reporter, CAPPED_KIND, MAX_REPORTS};
 pub use report::{
     FrameRule, Layer, Report, RustSource, WebBundle, MAX_DETAILS, MAX_FRAMES, UNRECOGNIZED_KIND,

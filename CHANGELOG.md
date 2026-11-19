@@ -8,6 +8,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 ## [Unreleased]
 
 ### Added
+- `tauri-kit-diagnostics`: `PanicHook` — what a panic leaves behind before the process ends, for an app built with
+  `panic = "abort"`, where a panic otherwise leaves only an exit code. `log(file)` appends the time, the thread, the
+  message, the location and a backtrace to a file on the device (moved aside to `<name>.1` past `max_log_bytes`,
+  default `MAX_PANIC_LOG_BYTES` = 1 MiB); `report(reporter, layer, version)` also records a content-free `Report` of
+  kind `Panic` — the location and the frames the layer's rule recognises, never the message. `install()` keeps the
+  hook installed before it, which still runs afterwards; `keep(info)` does one panic's work on its own.
 
 - `tauri-kit-webview` `popup`: the windows a page opens, settled as a browser settles them. `opening(Request { url,
   user_initiated, sized })` refuses what the person did not ask for and anything that is not a web page, answers
