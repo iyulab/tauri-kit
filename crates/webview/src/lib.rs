@@ -30,7 +30,7 @@
 //!   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`, but current runtimes do not apply that variable to an
 //!   app that passes browser arguments of its own — and a Tauri app always does, its web view library
 //!   passes defaults. [`forwarded_browser_arguments`] gives the window those arguments itself, in a
-//!   debug build only.
+//!   debug build only — or, with the `automation` feature, in a packaged build made for probes.
 //!
 //! A fourth is for windows that show content the app does not trust:
 //!
@@ -75,6 +75,41 @@
 //!   which process, why, the exit code — and [`failure::reload`] restarts a page whose render process ended; what the app
 //!   tells the person, reports or retries stays the app's.
 //!
+//! An eleventh is for windows that show web pages:
+//!
+//! - **Open the windows a page asks for as a browser does.** [`popup::opening`] refuses what the person did not ask for,
+//!   keeps `window.opener` for a sized window (sign-in and payment pages hand their result back through it) and leaves
+//!   the rest to the app; [`popup::close_window_on_script_close`] closes such a window when its page closes itself.
+//!   Who asked comes from WebView2's `IsUserInitiated` ([`popup`] says how on each platform).
+//! - **Let the person point at a part of the page.** [`pick::start`] highlights what is under the pointer and hands over
+//!   the element picked — markup, text, a selector, its box, a few styles — with nothing put into the page.
+//! - **Give a page's full screen the whole window.** [`fullscreen::watch`] says when the page enters and leaves full
+//!   screen, so an app whose web view is one part of the window can give it the rest.
+//! - **Keep the app's keys the app's.** [`keys::intercept`] sees each key press before the page does; a key the app
+//!   takes never reaches the page.
+//!
+//! # Showing a page the app does not trust
+//!
+//! A web view of the app's window that shows a page someone else wrote — a site, a generated app, a document — is put
+//! together from the pieces above and two settings that are the app's own, since this crate does not depend on the
+//! framework:
+//!
+//! 1. **No command reaches it.** In Tauri, give the web view a label that no capability file lists (under `windows` or
+//!    `webviews`), and do not list the page's origin under any capability's `remote.urls`. Every command the page
+//!    invokes — the app's and every plugin's — is then refused. Add no initialization script to it. A test should prove
+//!    it: from the page, `window.__TAURI_INTERNALS__.invoke(…)` of a command the app has must be rejected.
+//! 2. **It stays on its origin.** Build it on an allowed address, lock it ([`lock_navigation`] on Windows,
+//!    [`NavigationLock::decide`] in the builder's navigation handler elsewhere), then navigate to the content.
+//! 3. **Windows it opens are decided, not taken.** Feed each request to [`popup::opening`]; open
+//!    [`popup::Opening::Elsewhere`] where the app opens addresses (or ask first).
+//! 4. **Nothing it types is kept.** Turn autofill off on the builder and call [`forget_form_entries`].
+//! 5. **The app's keys and the person's pointing stay out of its reach**: [`keys::intercept`], [`pick`].
+//! 6. **It can fail alone.** [`failure::watch`] reports an ended render process (Windows) and [`failure::reload`]
+//!    brings it back; the app's own web view is not affected.
+//!
+//! What this does not stop: a page can still send data out without navigating (images, `fetch`, beacons, WebSocket,
+//! WebRTC). That is the response's Content-Security-Policy's to stop — see [`lock`].
+//!
 //! On macOS and Linux the system web view is part of the operating system: [`runtime`] answers
 //! [`Runtime::System`] and there is no profile to clear.
 
@@ -82,8 +117,12 @@ pub mod caption;
 pub mod context_menu;
 pub mod drop;
 pub mod failure;
+pub mod fullscreen;
+pub mod keys;
 pub mod lock;
 pub mod pdf;
+pub mod pick;
+pub mod popup;
 pub mod taskbar;
 
 #[cfg(windows)]
@@ -237,6 +276,12 @@ pub const ADDITIONAL_BROWSER_ARGUMENTS_VAR: &str = "WEBVIEW2_ADDITIONAL_BROWSER_
 /// [`ADDITIONAL_BROWSER_ARGUMENTS_VAR`] holds — or `None` when the variable is unset or empty, and
 /// always in a release build, so an installed app never opens a debugging port because of a variable.
 ///
+/// Built with the `automation` feature, a release build forwards them too — for a packaged build made
+/// for probes or captures, which have to reach every web view of the window: give child web views the same arguments,
+/// so they share the window's browser process and with it the debugging port (WebView2 refuses a
+/// second set of arguments for the same profile folder). Never enable it in a build shipped to people:
+/// anyone who can set the variable could then drive the app.
+///
 /// Current WebView2 runtimes do not apply the variable to an app that passes browser arguments of its
 /// own, and a Tauri app always does. Giving the window arguments, though, replaces the ones its web
 /// view library passes by default, so `base` repeats them — for a Tauri app on wry,
@@ -255,7 +300,7 @@ pub const ADDITIONAL_BROWSER_ARGUMENTS_VAR: &str = "WEBVIEW2_ADDITIONAL_BROWSER_
 ///
 /// "Debug build" is this crate's: a dependency is built with the profile of the app that uses it.
 pub fn forwarded_browser_arguments(base: &str) -> Option<String> {
-    if !cfg!(debug_assertions) {
+    if !cfg!(debug_assertions) && !cfg!(feature = "automation") {
         return None;
     }
     forward(

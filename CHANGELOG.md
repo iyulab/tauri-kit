@@ -15,6 +15,48 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
   kind `Panic` — the location and the frames the layer's rule recognises, never the message. `install()` keeps the
   hook installed before it, which still runs afterwards; `keep(info)` does one panic's work on its own.
 
+- `tauri-kit-webview` `popup`: the windows a page opens, settled as a browser settles them. `opening(Request { url,
+  user_initiated, sized })` refuses what the person did not ask for and anything that is not a web page, answers
+  `KeepOpener` for a sized `window.open` (and a sized `about:blank`) — a sign-in or payment page hands its result back
+  through `window.opener`, which a window opened anywhere else breaks — and leaves the rest to the app (`Elsewhere`).
+  `close_window_on_script_close` closes the window that holds such a page when the page calls `window.close()`; until now
+  the framework removed the web view and left its window standing, empty (Windows: the root window gets `WM_CLOSE`, so the
+  app's close handling runs; macOS: the UI delegate's `webViewDidClose:`, closing only windows marked by the call). Who
+  asked: `report_new_windows` (Windows) reports WebView2's `IsUserInitiated` for each request, which the framework's
+  new-window handler does not pass on; `block_scripted_windows` (macOS) turns on the system web view's popup blocker, off
+  by default there, after which every request reaching the handler came from the person. A window held by
+  `lock_navigation` needs none of these: the lock reports each request with who asked.
+- `tauri-kit-webview` `pick`: let the person pick an element of a page, as a browser's "select an element" tool does, with
+  nothing put into the page — the page cannot see the picking, stop it, or answer with an element of its choosing.
+  `start(view, Look, Limits, on_event)` highlights the element under the pointer; a click hands over its markup and visible
+  text, tag, a selector that finds it again (its id or a label only it has; positional steps only as a fallback), its box in
+  the web view's top document and a few computed styles (`Event::Picked(Element { .. })`, read where the page's scripts
+  cannot change the answer) and leaves a border
+  on it that follows it while the page takes clicks again; Esc, a new `start` or `clear` ends a pick under way
+  (`Event::Cancelled`), and `clear` removes the border. Elements in open shadow trees and same-origin frames are picked as
+  themselves. Windows: the browser's inspect mode (DevTools `Overlay.setInspectMode`), which draws the highlight; macOS: a
+  transparent view over the web view, with the element found in a script world of the crate's own. Adds `serde_json` to
+  the crate (already used across the workspace).
+- `tauri-kit-webview` feature `automation`: `forwarded_browser_arguments` forwards the debugging port a test run asks for
+  in a release build as well, so a probe or a capture tool can reach a packaged build's web views — child web views
+  included when they are given the same arguments, as they then share the window's browser process. Off by default; a build shipped to people must not enable it.
+- `tauri-kit-webview` `keys`: keys the app takes before the page. `intercept(view, take)` hands each key press to `take`
+  as a `Stroke { key, ctrl, shift, alt, meta }` before the page sees it; a press it takes never reaches the page, so a
+  page can neither swallow the app's keys nor see them. `Key` names keys the same on both platforms (letters follow the
+  keyboard layout). `watch_focus` reports `Focus::In` / `Focus::Out`. Windows: WebView2's `AcceleratorKeyPressed`, and
+  `GotFocus` / `LostFocus` for focus. macOS: a local event monitor, kept while the returned `Intercept` lives, that takes
+  only keys sent to the web view's window while the web view (or a view inside it) is the first responder; focus is
+  that same test while the window is the key window, checked on window updates and on the window losing key status,
+  and reported when it changes, for as long as the returned `FocusWatch` lives.
+- `tauri-kit-webview` docs: «Showing a page the app does not trust» — how a web view for a page someone else wrote is
+  put together: no command reaches it (a label outside every capability, its origin under no `remote.urls`, no
+  initialization script, and a test that a command invoked from the page is refused), the navigation lock, `popup`,
+  autofill off, `keys` and `pick`, and `failure`; and what it leaves to the response's Content-Security-Policy.
+- `tauri-kit-webview` `fullscreen::watch` (Windows): reports when the page enters and leaves full screen
+  (`requestFullscreen()`, Esc), so an app whose web view is one part of the window can give it the whole window — the
+  web view lays the element over its own bounds only. The docs state that on Windows a Tauri app's window itself goes
+  to full screen whenever a web view holds a full-screen element, with no setting to keep it windowed. macOS: not yet.
+
 ## [0.32.1] - 2026-11-13
 
 ### Fixed
