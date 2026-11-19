@@ -7,6 +7,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-11-19
+
 ### Added
 - `tauri-kit-diagnostics`: `PanicHook` — what a panic leaves behind before the process ends, for an app built with
   `panic = "abort"`, where a panic otherwise leaves only an exit code. `log(file)` appends the time, the thread, the
