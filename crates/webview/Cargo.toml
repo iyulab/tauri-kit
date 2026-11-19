@@ -11,6 +11,15 @@ categories = ["gui", "os"]
 
 # The web view types an app holds come from the same `webview2-com` its Tauri version uses; the
 # major version here follows Tauri's, so a controller the app passes in is the type expected here.
+[features]
+# Forward the debugging port a test run asks for in a release build as well (`forwarded_browser_arguments`) — for a
+# packaged build made for probes or captures, never one shipped to people.
+automation = []
+
+[dependencies]
+# DevTools answers (Windows) and script-world answers (macOS) of `pick` are JSON.
+serde_json = "1"
+
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.39"
 windows-core = "0.62"
@@ -23,9 +32,9 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphic
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSAlert", "NSApplication", "NSButton", "NSControl", "NSEvent", "NSMenu", "NSMenuItem", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSUserInterfaceItemIdentification", "NSView"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSEnumerator", "NSError", "NSString", "NSURL"] }
-objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "WKWebView"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSAlert", "NSApplication", "NSButton", "NSControl", "NSEvent", "NSMenu", "NSMenuItem", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSUserInterfaceItemIdentification", "NSView", "NSWindow"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSDate", "NSEnumerator", "NSError", "NSGeometry", "NSNotification", "NSOperation", "NSString", "NSTimer", "NSURL"] }
+objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "WKContentWorld", "WKFrameInfo", "WKPreferences", "WKUIDelegate", "WKWebView", "WKWebViewConfiguration"] }
 
 [dev-dependencies]
 tempfile = "3"
