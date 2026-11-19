@@ -35,8 +35,8 @@ fn a_panic_leaves_its_message_in_the_log_and_only_its_place_in_the_report() {
         "the log keeps the message: {text}"
     );
     assert!(
-        text.contains("tests/panic_hook.rs:"),
-        "the log names the location: {text}"
+        text.replace('\\', "/").contains("tests/panic_hook.rs:"),
+        "the log names the location (either separator): {text}"
     );
 
     let report = fs::read_to_string(&reports).unwrap();
