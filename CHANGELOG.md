@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+- `tauri-kit-sidecar`: `Output::Piped { stderr }` — a sidecar the app talks to over stdio (a request/response protocol,
+  length-prefixed frames, an MCP stdio server). Its stdin and stdout stay pipes the app takes with
+  `Sidecar::take_stdin()` / `Sidecar::take_stdout()`; the kit reads neither and adds no framing. Console hiding, the
+  process-tree placement, `try_status` / `is_running`, `shutdown` and the stop on drop are as for the other outputs;
+  stderr goes where its `Sink` says. Reading stdout becomes the app's job. `Output` gains a variant, so an exhaustive
+  `match` on it needs an arm for `Piped`.
+
 ## [0.33.0] - 2026-11-19
 
 ### Added

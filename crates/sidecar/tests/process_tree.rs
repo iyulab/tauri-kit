@@ -495,3 +495,88 @@ fn a_run_past_its_deadline_stops_what_the_process_started_and_returns_at_once() 
         "a process the run started outlived its deadline"
     );
 }
+
+/// Copies stdin to stdout line by line, then exits when stdin closes.
+fn echo_stdin() -> Command {
+    if cfg!(windows) {
+        shell("findstr \"^\"")
+    } else {
+        shell("cat")
+    }
+}
+
+#[test]
+fn a_piped_sidecar_is_spoken_to_over_its_own_stdin_and_stdout() {
+    use std::io::{BufRead, BufReader, Write};
+    let mut sidecar = Sidecar::spawn(
+        echo_stdin(),
+        Output::Piped {
+            stderr: Sink::Discard,
+        },
+    )
+    .unwrap();
+    let mut stdin = sidecar.take_stdin().expect("stdin is the app's");
+    let mut stdout = BufReader::new(sidecar.take_stdout().expect("stdout is the app's"));
+    assert!(
+        sidecar.take_stdin().is_none() && sidecar.take_stdout().is_none(),
+        "taken once"
+    );
+
+    // One request, one answer, while the sidecar keeps running — not only a whole-output read at exit.
+    writeln!(stdin, "ping").unwrap();
+    stdin.flush().unwrap();
+    let mut answer = String::new();
+    stdout.read_line(&mut answer).unwrap();
+    assert_eq!(answer.trim_end(), "ping");
+    assert!(sidecar.is_running());
+
+    // Closing stdin is how a stdio helper is asked to quit: it ends on its own, cleanly.
+    drop(stdin);
+    let until = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = sidecar.try_status().unwrap() {
+            break status;
+        }
+        assert!(
+            Instant::now() < until,
+            "the sidecar did not quit when its stdin closed"
+        );
+        sleep(Duration::from_millis(20));
+    };
+    assert!(status.success(), "{status:?}");
+}
+
+#[test]
+fn a_piped_sidecar_still_stops_with_everything_it_started() {
+    let dir = temp_dir("piped-tree");
+    let (started, marker) = (dir.join("started"), dir.join("marker"));
+    let mut sidecar = Sidecar::spawn(
+        with_grandchild(&started, &marker),
+        Output::Piped {
+            stderr: Sink::Discard,
+        },
+    )
+    .unwrap();
+    let _stdin = sidecar.take_stdin();
+    wait_for(&started);
+    drop(sidecar);
+    sleep(Duration::from_secs(3));
+    assert!(
+        !marker.exists(),
+        "the grandchild outlived a dropped piped sidecar"
+    );
+}
+
+#[test]
+fn only_a_piped_sidecar_hands_over_its_stdio() {
+    let mut sidecar = Sidecar::spawn(
+        long_running(),
+        Output::Lines {
+            stdout: None,
+            stderr: Sink::Discard,
+        },
+    )
+    .unwrap();
+    assert!(sidecar.take_stdin().is_none(), "stdin is closed");
+    assert!(sidecar.take_stdout().is_none(), "the kit reads stdout");
+}
