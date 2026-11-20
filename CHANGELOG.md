@@ -7,6 +7,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-11-21
+
 ### Added
 - `tauri-kit-sidecar`: `Output::Piped { stderr }` — a sidecar the app talks to over stdio (a request/response protocol,
   length-prefixed frames, an MCP stdio server). Its stdin and stdout stay pipes the app takes with
@@ -1098,6 +1100,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - `tauri-kit-sidecar`: bundled helper processes without a console window, stopped together with
   everything they start, with readiness waits that notice a crash.
 
+[0.34.0]: https://github.com/iyulab/tauri-kit/compare/v0.33.0...v0.34.0
+[0.33.0]: https://github.com/iyulab/tauri-kit/compare/v0.32.1...v0.33.0
 [0.32.1]: https://github.com/iyulab/tauri-kit/compare/v0.32.0...v0.32.1
 [0.32.0]: https://github.com/iyulab/tauri-kit/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/iyulab/tauri-kit/compare/v0.30.0...v0.31.0
