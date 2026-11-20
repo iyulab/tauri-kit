@@ -17,6 +17,11 @@
 //! - **Pipes fill up.** A child whose output nobody reads blocks once the pipe buffer is full.
 //!   [`Output::Files`] drains both streams on background threads.
 //!
+//! A helper that is talked to over stdio — a request/response protocol, length-prefixed frames, an
+//! MCP stdio server — is started with [`Output::Piped`]: the app takes its stdin and stdout with
+//! [`Sidecar::take_stdin`] and [`Sidecar::take_stdout`] and speaks its own protocol, and the kit
+//! still hides the console and stops the whole tree.
+//!
 //! ```no_run
 //! # fn main() -> std::io::Result<()> {
 //! use std::{process::Command, time::Duration};
@@ -57,7 +62,7 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, TcpListener};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::Arc;
@@ -111,6 +116,13 @@ pub enum Output {
         stdout: Option<PathBuf>,
         stderr: Sink,
     },
+    /// stdin and stdout are pipes the app owns, for a helper it talks to over stdio: take them with
+    /// [`Sidecar::take_stdin`] and [`Sidecar::take_stdout`]. The kit reads neither and adds no
+    /// framing or protocol. Reading stdout is then the app's job — a child whose stdout is not read
+    /// blocks once the pipe is full; drop it to let the child's writes fail instead. Closing stdin
+    /// (dropping it) is how many such helpers are asked to quit, before [`Sidecar::shutdown`].
+    /// stderr goes where its [`Sink`] says.
+    Piped { stderr: Sink },
 }
 
 /// Where a stream the kit does not read goes.
@@ -190,7 +202,11 @@ impl Sidecar {
     /// where its whole tree can be stopped together.
     pub fn spawn(mut cmd: Command, output: Output) -> io::Result<Self> {
         hide_console(&mut cmd);
-        cmd.stdin(Stdio::null());
+        cmd.stdin(if matches!(output, Output::Piped { .. }) {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
         match &output {
             Output::Discard => {
                 cmd.stdout(Stdio::null()).stderr(Stdio::null());
@@ -198,7 +214,7 @@ impl Sidecar {
             Output::Files { .. } => {
                 cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
             }
-            Output::Lines { stderr, .. } => {
+            Output::Lines { stderr, .. } | Output::Piped { stderr } => {
                 cmd.stdout(Stdio::piped());
                 cmd.stderr(match stderr {
                     Sink::Discard => Stdio::null(),
@@ -236,6 +252,12 @@ impl Sidecar {
                     drain(err, path);
                 }
             }
+            // stdin and stdout stay on the child until the app takes them.
+            Output::Piped { stderr } => {
+                if let (Some(err), Sink::File(path)) = (child.stderr.take(), stderr) {
+                    drain(err, path);
+                }
+            }
         }
         Ok(Self { child, tree, lines })
     }
@@ -243,6 +265,18 @@ impl Sidecar {
     /// The operating system's id for the sidecar process.
     pub fn id(&self) -> u32 {
         self.child.id()
+    }
+
+    /// The sidecar's stdin, for the app to write to — the first call after [`Output::Piped`];
+    /// `None` afterwards and for every other [`Output`], whose stdin is closed.
+    pub fn take_stdin(&mut self) -> Option<ChildStdin> {
+        self.child.stdin.take()
+    }
+
+    /// The sidecar's stdout, for the app to read — the first call after [`Output::Piped`]; `None`
+    /// afterwards and for every other [`Output`], whose stdout the kit reads, drains or discards.
+    pub fn take_stdout(&mut self) -> Option<ChildStdout> {
+        self.child.stdout.take()
     }
 
     /// The exit status, if the sidecar has exited. Does not wait.
