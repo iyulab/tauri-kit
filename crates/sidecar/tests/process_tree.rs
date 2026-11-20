@@ -496,10 +496,12 @@ fn a_run_past_its_deadline_stops_what_the_process_started_and_returns_at_once() 
     );
 }
 
-/// Copies stdin to stdout line by line, then exits when stdin closes.
+/// Answers the first stdin line with the same line at once, then exits when stdin closes.
+/// (On Windows `findstr` would hold its output back while stdout is a pipe; `cmd`'s `echo` does not.)
 fn echo_stdin() -> Command {
     if cfg!(windows) {
-        shell("findstr \"^\"")
+        // `call` expands `line` after `set /p` read it; `set /p` fails at end of input, so the line ends with `exit 0`.
+        shell("set /p line=& call echo %line%& set /p rest=& exit 0")
     } else {
         shell("cat")
     }
