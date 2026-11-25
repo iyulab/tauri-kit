@@ -63,7 +63,7 @@ mod append;
 mod conflict;
 mod root;
 mod trash;
-pub use append::append_line;
+pub use append::{append_line, append_line_within};
 pub use conflict::{conflict_copy_of, conflict_copy_of_on};
 pub use root::{is_outside, Root};
 pub use trash::has_trash;

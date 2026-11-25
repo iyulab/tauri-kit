@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+### Added
+- `tauri-kit-fs`: `append_line_within(path, line, max_bytes)` — `append_line` to a log kept within a size. Past
+  `max_bytes` the oldest lines are dropped, keeping the newest whole lines that fit in half of it, and the file is
+  rewritten atomically — for a log that is an aid on the device, not a record anything depends on.
+
 ## [0.34.0] - 2026-11-21
 
 ### Added
