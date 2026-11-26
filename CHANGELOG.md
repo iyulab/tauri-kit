@@ -7,6 +7,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-11-26
+
 ### Added
 - `tauri-kit-fs`: `append_line_within(path, line, max_bytes)` — `append_line` to a log kept within a size. Past
   `max_bytes` the oldest lines are dropped, keeping the newest whole lines that fit in half of it, and the file is
@@ -1105,6 +1107,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (whil
 - `tauri-kit-sidecar`: bundled helper processes without a console window, stopped together with
   everything they start, with readiness waits that notice a crash.
 
+[0.35.0]: https://github.com/iyulab/tauri-kit/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/iyulab/tauri-kit/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/iyulab/tauri-kit/compare/v0.32.1...v0.33.0
 [0.32.1]: https://github.com/iyulab/tauri-kit/compare/v0.32.0...v0.32.1
